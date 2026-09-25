@@ -4,14 +4,14 @@ import { DEFAULT_BPM, secondsPerStep } from './presets';
 const FREQ_MIN = 55;
 const FREQ_MAX = 440;
 
-/** Semitone offsets from the X root for the arp chord. */
-const ARP_SEMIS = [0, 3, 7, 12] as const;
+/** Chord tones within one octave (minor 7), in semitones. */
+const ARP_DEGREE_SEMIS = [0, 3, 7, 10] as const;
 
-/** Steps between triggers, top→bottom of pad (fast → slow). */
-const RATE_STEPS = [0.5, 1, 2, 4] as const;
+/** Gate rate: steps between hits, top→bottom (fast → slow). */
+const GATE_RATE_STEPS = [0.5, 1, 2, 4] as const;
 
-/** Mid filter Y used when Y drives rate instead of cutoff. */
-const RHYTHM_FILTER_Y = 0.35;
+/** Fixed arp subdivision (one hit per sixteenth). */
+const ARP_STEPS_PER_HIT = 1;
 
 export type PadMode = 'hold' | 'arp' | 'gate';
 
@@ -33,6 +33,8 @@ export class PadSynth {
   private yNorm = 0.5;
   private bpm = DEFAULT_BPM;
   private arpIndex = 0;
+  /** Ignore transport ticks before this time (avoids double-hit with engage seed). */
+  private suppressUntil = 0;
 
   constructor(ctx: AudioContext, destination: AudioNode) {
     this.ctx = ctx;
@@ -70,7 +72,8 @@ export class PadSynth {
     }
     const wasActive = this.active;
     if (wasActive) {
-      this.silence(this.ctx.currentTime);
+      this.silenceHold(this.ctx.currentTime);
+      this.active = false;
     }
     this.mode = mode;
     this.arpIndex = 0;
@@ -80,8 +83,9 @@ export class PadSynth {
   }
 
   /**
-   * @param xNorm 0–1 left→right → pitch / root
-   * @param yNorm 0–1 top→bottom → filter (hold) or rate (arp/gate)
+   * HOLD: X pitch, Y filter.
+   * ARP: X root, Y octave span.
+   * GATE: X pitch, Y rate.
    */
   noteOn(xNorm: number, yNorm: number): void {
     this.xNorm = clamp01(xNorm);
@@ -97,9 +101,7 @@ export class PadSynth {
     this.xNorm = clamp01(xNorm);
     this.yNorm = clamp01(yNorm);
     if (this.mode === 'hold') {
-      this.setParams(this.xNorm, this.yNorm, this.ctx.currentTime, false);
-    } else if (this.mode === 'gate') {
-      this.setParams(this.xNorm, RHYTHM_FILTER_Y, this.ctx.currentTime, false);
+      this.setHoldParams(this.xNorm, this.yNorm, this.ctx.currentTime, false);
     }
   }
 
@@ -108,7 +110,7 @@ export class PadSynth {
       return;
     }
     this.active = false;
-    this.silence(this.ctx.currentTime);
+    this.silenceHold(this.ctx.currentTime);
   }
 
   /** Transport sixteenth-note tick — drives ARP and GATE while held. */
@@ -116,87 +118,119 @@ export class PadSynth {
     if (!this.active || this.mode === 'hold') {
       return;
     }
-    const rate = rateFromY(this.yNorm);
-    if (rate >= 1) {
-      if (step % rate !== 0) {
-        return;
-      }
-      this.fireRhythmEvent(time, stepDur * Math.min(rate, 2) * 0.55);
-      return;
-    }
-    const half = stepDur * 0.5;
-    this.fireRhythmEvent(time, half * 0.55);
-    this.fireRhythmEvent(time + half, half * 0.55);
-  }
-
-  private beginVoice(xNorm: number, yNorm: number): void {
-    const now = this.ctx.currentTime;
-    this.ensureOsc();
-    this.active = true;
-
-    if (this.mode === 'hold') {
-      this.setParams(xNorm, yNorm, now, true);
-      this.openAmp(now, 0.85, 0.012);
-      return;
-    }
-
-    this.setParams(xNorm, RHYTHM_FILTER_Y, now, true);
-    const g = this.amp.gain;
-    g.cancelScheduledValues(now);
-    g.setValueAtTime(0.0001, now);
-
-    const stepDur = secondsPerStep(this.bpm);
-    const rate = rateFromY(yNorm);
-    const noteDur = stepDur * Math.min(rate >= 1 ? rate : 0.5, 2) * 0.55;
-    this.fireRhythmEvent(now, noteDur);
-  }
-
-  private fireRhythmEvent(time: number, noteDur: number): void {
-    this.ensureOsc();
-    if (!this.osc) {
+    if (time < this.suppressUntil) {
       return;
     }
 
     if (this.mode === 'arp') {
-      const root = freqFromX(this.xNorm);
-      const chord = ARP_SEMIS.map((semi) => root * 2 ** (semi / 12));
-      const freq = chord[this.arpIndex % chord.length] ?? root;
-      this.arpIndex += 1;
-      this.osc.frequency.setValueAtTime(freq, time);
-      this.filter.frequency.setValueAtTime(220 + (1 - RHYTHM_FILTER_Y) * 6800, time);
-      this.pluckAmp(time, noteDur);
+      if (step % ARP_STEPS_PER_HIT !== 0) {
+        return;
+      }
+      this.fireArpNote(time, stepDur * 0.7);
       return;
     }
 
-    this.setParams(this.xNorm, RHYTHM_FILTER_Y, time, true);
-    this.pluckAmp(time, noteDur * 0.85);
+    const rate = gateRateFromY(this.yNorm);
+    if (rate >= 1) {
+      if (step % rate !== 0) {
+        return;
+      }
+      this.fireGateNote(time, stepDur * Math.min(rate, 2) * 0.45);
+      return;
+    }
+    const half = stepDur * 0.5;
+    this.fireGateNote(time, half * 0.45);
+    this.fireGateNote(time + half, half * 0.45);
   }
 
-  private openAmp(time: number, peak: number, attack: number): void {
+  private beginVoice(xNorm: number, yNorm: number): void {
+    const now = this.ctx.currentTime;
+    this.active = true;
+
+    if (this.mode === 'hold') {
+      this.ensureHoldOsc();
+      this.setHoldParams(xNorm, yNorm, now, true);
+      this.openHoldAmp(now, 0.85, 0.012);
+      return;
+    }
+
+    // Rhythmic modes use one-shots; park the hold voice.
+    this.silenceHold(now);
+    const stepDur = secondsPerStep(this.bpm);
+    this.suppressUntil = now + stepDur * 0.55;
+
+    if (this.mode === 'arp') {
+      this.fireArpNote(now, stepDur * 0.7);
+    } else {
+      const rate = gateRateFromY(yNorm);
+      const noteDur = stepDur * Math.min(rate >= 1 ? rate : 0.5, 2) * 0.45;
+      this.fireGateNote(now, noteDur);
+    }
+  }
+
+  private fireArpNote(time: number, duration: number): void {
+    const root = freqFromX(this.xNorm);
+    const octaves = octaveSpanFromY(this.yNorm);
+    const chord = buildArpChord(root, octaves);
+    const freq = chord[this.arpIndex % chord.length] ?? root;
+    this.arpIndex += 1;
+    const cutoff = Math.min(freq * 6, 5200);
+    this.playOneShot(freq, time, duration, cutoff);
+  }
+
+  private fireGateNote(time: number, duration: number): void {
+    const freq = freqFromX(this.xNorm);
+    const cutoff = Math.min(freq * 5.5, 4800);
+    this.playOneShot(freq, time, duration, cutoff);
+  }
+
+  /** Independent voice — avoids shared-amp automation fights. */
+  private playOneShot(
+    freq: number,
+    time: number,
+    duration: number,
+    cutoff: number,
+  ): void {
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(Math.max(freq, 20), time);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 2.4;
+    filter.frequency.setValueAtTime(Math.max(cutoff, 200), time);
+
+    const gain = this.ctx.createGain();
+    const peak = 0.72;
+    const attack = 0.004;
+    const releaseAt = time + Math.max(duration, attack + 0.02);
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.exponentialRampToValueAtTime(peak, time + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, releaseAt);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.output);
+
+    osc.start(time);
+    osc.stop(releaseAt + 0.03);
+  }
+
+  private openHoldAmp(time: number, peak: number, attack: number): void {
     const g = this.amp.gain;
     g.cancelScheduledValues(time);
     g.setValueAtTime(Math.max(g.value, 0.0001), time);
     g.exponentialRampToValueAtTime(peak, time + attack);
   }
 
-  private pluckAmp(time: number, duration: number): void {
-    const peak = 0.85;
-    const attack = 0.008;
-    const release = Math.max(duration - attack, 0.02);
-    const g = this.amp.gain;
-    g.setValueAtTime(0.0001, time);
-    g.exponentialRampToValueAtTime(peak, time + attack);
-    g.exponentialRampToValueAtTime(0.0001, time + attack + release);
-  }
-
-  private silence(time: number): void {
+  private silenceHold(time: number): void {
     const g = this.amp.gain;
     g.cancelScheduledValues(time);
     g.setValueAtTime(Math.max(g.value, 0.0001), time);
-    g.exponentialRampToValueAtTime(0.0001, time + 0.14);
+    g.exponentialRampToValueAtTime(0.0001, time + 0.08);
   }
 
-  private ensureOsc(): void {
+  private ensureHoldOsc(): void {
     if (this.osc) {
       return;
     }
@@ -207,7 +241,12 @@ export class PadSynth {
     this.osc = osc;
   }
 
-  private setParams(xNorm: number, yNorm: number, time: number, snap: boolean): void {
+  private setHoldParams(
+    xNorm: number,
+    yNorm: number,
+    time: number,
+    snap: boolean,
+  ): void {
     if (!this.osc) {
       return;
     }
@@ -229,10 +268,32 @@ function freqFromX(xNorm: number): number {
   return FREQ_MIN * (FREQ_MAX / FREQ_MIN) ** x;
 }
 
-function rateFromY(yNorm: number): number {
+/** Top of pad = 3 octaves, bottom = 1. */
+function octaveSpanFromY(yNorm: number): number {
   const y = clamp01(yNorm);
-  const idx = Math.min(RATE_STEPS.length - 1, Math.floor(y * RATE_STEPS.length));
-  return RATE_STEPS[idx] ?? 1;
+  return Math.min(3, 1 + Math.floor((1 - y) * 3));
+}
+
+function buildArpChord(rootHz: number, octaves: number): number[] {
+  const notes: number[] = [];
+  for (let oct = 0; oct < octaves; oct += 1) {
+    for (const degree of ARP_DEGREE_SEMIS) {
+      const hz = rootHz * 2 ** ((degree + oct * 12) / 12);
+      if (hz <= FREQ_MAX * 4) {
+        notes.push(hz);
+      }
+    }
+  }
+  return notes.length > 0 ? notes : [rootHz];
+}
+
+function gateRateFromY(yNorm: number): number {
+  const y = clamp01(yNorm);
+  const idx = Math.min(
+    GATE_RATE_STEPS.length - 1,
+    Math.floor(y * GATE_RATE_STEPS.length),
+  );
+  return GATE_RATE_STEPS[idx] ?? 1;
 }
 
 function clamp01(v: number): number {
