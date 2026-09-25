@@ -1,5 +1,14 @@
 import { AudioEngine } from '../audio/engine';
-import { PAD_MODES, type PadMode } from '../audio/pad-synth';
+import {
+  ARP_OCT_MAX,
+  ARP_OCT_MIN,
+  ARP_PATTERNS,
+  ARP_RATES,
+  PAD_MODES,
+  type ArpPattern,
+  type ArpRate,
+  type PadMode,
+} from '../audio/pad-synth';
 import {
   BASS_PRESETS,
   BPM_MAX,
@@ -95,6 +104,68 @@ export function mountApp(root: HTMLElement): void {
   const synthVol = fieldVolume('SYNTH LVL', 'synth-volume', engine.synthVolume);
   mixBar.append(drumVol.root, bassVol.root, synthVol.root);
 
+  const arpInspector = el('div', 'arp-inspector');
+
+  const modeSeg = fieldSegments(
+    'MODE',
+    'pad-mode',
+    PAD_MODES.map((p) => ({
+      value: p.id,
+      label: p.label,
+      shortcut: p.shortcut,
+      title: `${p.label} (${p.shortcut})`,
+    })),
+    engine.pad.padMode,
+  );
+
+  const patternSeg = fieldSegments(
+    'PATTERN',
+    'arp-pattern',
+    ARP_PATTERNS.map((p) => ({
+      value: p.id,
+      label: p.label,
+      shortcut: p.shortcut,
+      title: `${p.label} (${p.shortcut})`,
+    })),
+    engine.pad.arpPatternId,
+  );
+
+  const rateSeg = fieldSegments(
+    'RATE',
+    'arp-rate',
+    ARP_RATES.map((r) => ({
+      value: r.id,
+      label: r.label,
+    })),
+    engine.pad.arpRateId,
+  );
+
+  const arpOctField = fieldStepper(
+    'ARP OCT',
+    'arp-oct',
+    engine.pad.arpOctaveSpan,
+    ARP_OCT_MIN,
+    ARP_OCT_MAX,
+    (next) => {
+      unlockAudio();
+      engine.pad.setArpOctaves(next);
+      arpOctField.setValue(engine.pad.arpOctaveSpan);
+    },
+  );
+
+  const arpOnlyGroup = el('div', 'arp-only-group');
+  arpOnlyGroup.append(patternSeg.root, rateSeg.root, arpOctField.root);
+  arpInspector.append(modeSeg.root, arpOnlyGroup);
+
+  const syncArpOnlyEnabled = (mode: PadMode): void => {
+    const enabled = mode === 'arp';
+    arpOnlyGroup.classList.toggle('is-disabled', !enabled);
+    arpOnlyGroup.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+    patternSeg.setEnabled(enabled);
+    rateSeg.setEnabled(enabled);
+    arpOctField.setEnabled(enabled);
+  };
+
   const mainRow = el('div', 'main-row');
 
   const padRail = el('aside', 'pad-rail');
@@ -110,12 +181,6 @@ export function mountApp(root: HTMLElement): void {
     'synth-voice',
     SYNTH_VOICES.map((v) => ({ value: v.id, label: v.label })),
     engine.pad.synthVoiceId,
-  );
-  const modeField = fieldSelect(
-    'PAD',
-    'pad-mode',
-    PAD_MODES.map((p) => ({ value: p.id, label: p.label })),
-    engine.pad.padMode,
   );
 
   let octRange = SCALE_OCTAVES;
@@ -149,7 +214,15 @@ export function mountApp(root: HTMLElement): void {
       padMetaY.textContent = 'Y · RATE';
     }
   };
-  syncPadMeta(engine.pad.padMode);
+
+  const applyMode = (mode: PadMode): void => {
+    engine.pad.setMode(mode);
+    modeSeg.setValue(mode);
+    syncPadMeta(mode);
+    syncArpOnlyEnabled(mode);
+  };
+
+  applyMode(engine.pad.padMode);
 
   padFrame.append(padSurface, padMeta);
   stage.append(padFrame);
@@ -239,13 +312,12 @@ export function mountApp(root: HTMLElement): void {
   padRail.append(
     scaleField.root,
     synthField.root,
-    modeField.root,
     octRangeField.root,
     octOffsetField.root,
   );
 
   mainRow.append(padRail, stage);
-  root.append(header, songBar, mixBar, mainRow);
+  root.append(header, songBar, mixBar, arpInspector, mainRow);
 
   const setStatus = (playing: boolean, padLive: boolean): void => {
     const transportLabel = playing ? 'TRANSPORT ON' : 'STANDBY';
@@ -289,11 +361,21 @@ export function mountApp(root: HTMLElement): void {
     engine.pad.setSynthVoice(synthField.select.value as SynthVoiceId);
   });
 
-  modeField.select.addEventListener('change', () => {
+  modeSeg.onChange((value) => {
     unlockAudio();
-    const mode = modeField.select.value as PadMode;
-    engine.pad.setMode(mode);
-    syncPadMeta(mode);
+    applyMode(value as PadMode);
+  });
+
+  patternSeg.onChange((value) => {
+    unlockAudio();
+    engine.pad.setArpPattern(value as ArpPattern);
+    patternSeg.setValue(value);
+  });
+
+  rateSeg.onChange((value) => {
+    unlockAudio();
+    engine.pad.setArpRate(value as ArpRate);
+    rateSeg.setValue(value);
   });
 
   keyField.select.addEventListener('change', () => {
@@ -356,10 +438,16 @@ export function mountApp(root: HTMLElement): void {
         syncTransportUi();
       }
       engine.padNoteOn(norm.x, norm.y);
+      if (engine.pad.padMode === 'arp') {
+        arpOctField.setValue(engine.pad.arpOctaveSpan);
+      }
       setStatus(engine.isPlaying, true);
     },
     onMove: (norm) => {
       engine.padNoteMove(norm.x, norm.y);
+      if (engine.pad.padMode === 'arp') {
+        arpOctField.setValue(engine.pad.arpOctaveSpan);
+      }
     },
     onRelease: () => {
       engine.padNoteOff();
@@ -367,11 +455,40 @@ export function mountApp(root: HTMLElement): void {
     },
   });
 
+  const patternByKey = new Map<string, ArpPattern>([
+    ['arrowup', 'up'],
+    ['arrowdown', 'down'],
+    ['arrowright', 'upDown'],
+    ['arrowleft', 'downUp'],
+    ['/', 'random'],
+  ]);
+
+  const modeByDigit = new Map<string, PadMode>(
+    PAD_MODES.map((p) => [p.shortcut, p.id] as const),
+  );
+
   window.addEventListener('keydown', (event) => {
     if (event.repeat || isTypingTarget(event.target)) {
       return;
     }
     const key = event.key.toLowerCase();
+
+    const modeFromDigit = modeByDigit.get(key);
+    if (modeFromDigit) {
+      event.preventDefault();
+      unlockAudio();
+      applyMode(modeFromDigit);
+      return;
+    }
+
+    const patternFromKey = patternByKey.get(key);
+    if (patternFromKey && engine.pad.padMode === 'arp') {
+      event.preventDefault();
+      unlockAudio();
+      engine.pad.setArpPattern(patternFromKey);
+      patternSeg.setValue(patternFromKey);
+      return;
+    }
 
     if (key === OCTAVE_DOWN_KEY) {
       event.preventDefault();
@@ -471,6 +588,100 @@ function fieldSelect(
   return { root, select };
 }
 
+type SegmentOption = {
+  value: string;
+  label: string;
+  shortcut?: string;
+  title?: string;
+};
+
+function fieldSegments(
+  labelText: string,
+  id: string,
+  options: readonly SegmentOption[],
+  selected: string,
+): {
+  root: HTMLElement;
+  setValue: (value: string) => void;
+  setEnabled: (enabled: boolean) => void;
+  onChange: (handler: (value: string) => void) => void;
+} {
+  const root = el('div', 'field field-segments');
+  root.id = id;
+
+  const caption = el('span', 'field-label');
+  caption.textContent = labelText;
+
+  const row = el('div', 'segment-row');
+  row.setAttribute('role', 'radiogroup');
+  row.setAttribute('aria-label', labelText);
+
+  const buttons = new Map<string, HTMLButtonElement>();
+  let current = selected;
+  let enabled = true;
+  let changeHandler: ((value: string) => void) | null = null;
+
+  const sync = (): void => {
+    for (const [value, btn] of buttons) {
+      const on = value === current;
+      btn.classList.toggle('is-on', on);
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.disabled = !enabled;
+    }
+  };
+
+  for (const opt of options) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'segment-btn';
+    btn.setAttribute('role', 'radio');
+    btn.dataset.value = opt.value;
+    if (opt.title) {
+      btn.title = opt.title;
+    }
+
+    const label = el('span', 'segment-label');
+    label.textContent = opt.label;
+    btn.append(label);
+
+    if (opt.shortcut) {
+      const glyph = el('span', 'segment-shortcut');
+      glyph.textContent = opt.shortcut;
+      btn.append(glyph);
+    }
+
+    btn.addEventListener('click', () => {
+      if (!enabled || current === opt.value) {
+        return;
+      }
+      current = opt.value;
+      sync();
+      changeHandler?.(opt.value);
+    });
+
+    buttons.set(opt.value, btn);
+    row.append(btn);
+  }
+
+  sync();
+  root.append(caption, row);
+
+  return {
+    root,
+    setValue: (value) => {
+      current = value;
+      sync();
+    },
+    setEnabled: (next) => {
+      enabled = next;
+      sync();
+    },
+    onChange: (handler) => {
+      changeHandler = handler;
+    },
+  };
+}
+
 function fieldStepper(
   labelText: string,
   id: string,
@@ -479,7 +690,11 @@ function fieldStepper(
   max: number,
   onChange: (next: number) => void,
   format: (value: number) => string = String,
-): { root: HTMLElement; setValue: (value: number) => void } {
+): {
+  root: HTMLElement;
+  setValue: (value: number) => void;
+  setEnabled: (enabled: boolean) => void;
+} {
   const root = el('div', 'field field-stepper');
   root.id = id;
 
@@ -504,22 +719,24 @@ function fieldStepper(
   upBtn.setAttribute('aria-label', `${labelText} up`);
 
   let current = initial;
+  let enabled = true;
 
   const sync = (): void => {
     valueLabel.textContent = format(current);
-    downBtn.disabled = current <= min;
-    upBtn.disabled = current >= max;
+    downBtn.disabled = !enabled || current <= min;
+    upBtn.disabled = !enabled || current >= max;
+    root.classList.toggle('is-disabled', !enabled);
   };
   sync();
 
   downBtn.addEventListener('click', () => {
-    if (current <= min) {
+    if (!enabled || current <= min) {
       return;
     }
     onChange(current - 1);
   });
   upBtn.addEventListener('click', () => {
-    if (current >= max) {
+    if (!enabled || current >= max) {
       return;
     }
     onChange(current + 1);
@@ -532,6 +749,10 @@ function fieldStepper(
     root,
     setValue: (value) => {
       current = value;
+      sync();
+    },
+    setEnabled: (next) => {
+      enabled = next;
       sync();
     },
   };

@@ -43,7 +43,7 @@ body {
 .shell {
   --pad-size: min(72vh, calc(100vw - 3rem - 9.5rem), 640px);
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto 1fr;
   gap: 1.25rem;
   max-width: 1040px;
   min-height: 100vh;
@@ -108,6 +108,100 @@ body {
   align-items: end;
   padding-top: 0.15rem;
   border-top: 1px solid var(--rule);
+}
+
+.arp-inspector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.85rem 1.25rem;
+  padding: 0.85rem 0 0.15rem;
+  border-top: 1px solid var(--rule);
+}
+
+.arp-only-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.85rem 1.25rem;
+  padding-left: 1.1rem;
+  border-left: 1px solid var(--rule);
+  transition: opacity 160ms ease;
+}
+
+.arp-only-group.is-disabled {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+.field-segments {
+  min-width: 0;
+}
+
+.segment-row {
+  display: flex;
+  flex-wrap: nowrap;
+  width: max-content;
+  max-width: 100%;
+  border: 1px solid var(--rule-strong);
+}
+
+.segment-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  border-right: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  outline: none;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.segment-btn:last-child {
+  border-right: 0;
+}
+
+.segment-btn:hover:not(:disabled),
+.segment-btn:focus-visible:not(:disabled) {
+  color: var(--accent);
+}
+
+.segment-btn.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.segment-btn:disabled {
+  cursor: default;
+}
+
+.segment-label {
+  font-size: 0.72rem;
+}
+
+.segment-shortcut {
+  color: var(--ink-dim);
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+}
+
+.segment-btn.is-on .segment-shortcut {
+  color: var(--ink-dim);
+}
+
+.field-stepper.is-disabled {
+  opacity: 0.38;
+  pointer-events: none;
 }
 
 .main-row {
@@ -488,6 +582,36 @@ body {
 
   .mix-bar {
     grid-template-columns: 1fr;
+  }
+
+  .arp-inspector {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .arp-only-group {
+    flex-direction: column;
+    align-items: stretch;
+    padding-left: 0;
+    border-left: 0;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--rule);
+    gap: 0.75rem;
+  }
+
+  .segment-row {
+    width: 100%;
+  }
+
+  .segment-btn {
+    flex: 1;
+    justify-content: center;
+    padding: 0.5rem 0.35rem;
+  }
+
+  .segment-shortcut {
+    display: none;
   }
 
   .main-row {
