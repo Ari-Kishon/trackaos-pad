@@ -1,7 +1,7 @@
 {
-  "name": "vite-template",
+  "name": "trackaos-pad",
   "version": "0.1.0",
-  "description": "Vite + TypeScript app starter (Node 24, strict TS, ESLint, CI)",
+  "description": "Minimal Kaoss Pad–like browser music tool — drum/bass loops + XY synth pad",
   "type": "module",
   "private": true,
   "engines": {

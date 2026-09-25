@@ -1,14 +1,8 @@
-# vite-template
+# Trackaos Pad
 
-GitHub template for a Vite + TypeScript browser app. Tooling matches the stack used in [kakascope](https://github.com/Ari-Kishon/kakascope): Node 24, strict TypeScript, ESLint `strictTypeChecked`, and a typecheck/lint/build CI workflow.
+Minimal browser music tool in the spirit of a Kaoss Pad: synced drum and bass loops plus an XY performance synth. Vanilla TypeScript + Vite, Web Audio only (no sample assets).
 
-## Use as a GitHub template
-
-1. Create a new GitHub repo from this template (or push this folder and enable **Template repository** in Settings).
-2. Rename `name` in `package.json` and the page `<title>` in `index.html`.
-3. Point Cursor at the repo; `.cursor/settings.json` enables the `ai-sweatshop` plugin from [universal-cursor-rules](https://github.com/Ari-Kishon/universal-cursor-rules) if you have that marketplace installed.
-
-## Scripts
+## Run
 
 ```bash
 npm install
@@ -19,19 +13,14 @@ npm run build      # static site → build/
 npm run start      # build + preview
 ```
 
-## What’s included
+## Play
 
-| Piece | Role |
-|-------|------|
-| `.nvmrc` / `engines.node` | Node ≥ 24 |
-| `tsconfig.json` | `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, `erasableSyntaxOnly` |
-| `eslint.config.js` | `@eslint/js` recommended + `typescript-eslint` strict type-checked on `src/` |
-| `vite.config.ts` | ES2022 build, `build/` outDir, assets under `app/` |
-| `.github/workflows/ci.yml` | `npm ci` → typecheck → lint → build |
-| `.cursor/settings.json` | Enable ai-sweatshop Cursor plugin |
+1. Choose a **DRUM** and **BASS** preset.
+2. Press **START**, or press the pad (transport starts on first pad engage).
+3. Drag on the pad: **X** maps pitch, **Y** maps filter cutoff. Release fades the voice.
 
-Deploy workflows are **not** included — wire S3/CloudFront (or anything else) per project.
+Aesthetic is sparse HUD — cool near-black ground, hairline grid, pale amber accent.
 
-## Stub app
+## Stack
 
-`index.html`, `styles.css`, and `src/main.ts` are a blank page so CI passes. Delete or rewrite them for the real product.
+Node ≥ 24, strict TypeScript, ESLint `strictTypeChecked`, Vite on port 2222.
