@@ -138,6 +138,19 @@ export class PadSynth {
     this.silenceHold(this.ctx.currentTime);
   }
 
+  /**
+   * Snap pad X (root/pitch) to a MIDI note via inverse of freqFromX.
+   * Updates live HOLD frequency when the pad voice is already engaged.
+   * @returns clamped xNorm used for the pad.
+   */
+  setRootMidi(midi: number): number {
+    this.xNorm = xNormFromFreq(midiToHz(midi));
+    if (this.active && this.mode === 'hold') {
+      this.setHoldParams(this.xNorm, this.yNorm, this.ctx.currentTime, true);
+    }
+    return this.xNorm;
+  }
+
   /** Transport sixteenth-note tick — drives ARP, GATE, and IMS while held. */
   onTransportStep(step: number, time: number, stepDur: number): void {
     if (!this.active || this.mode === 'hold') {

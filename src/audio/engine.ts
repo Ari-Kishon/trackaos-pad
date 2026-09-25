@@ -32,7 +32,11 @@ export class AudioEngine {
   private readonly master: GainNode;
   private readonly drumBus: GainNode;
   private readonly bassBus: GainNode;
+  private readonly keyboardBus: GainNode;
+  private readonly keyboardFilter: BiquadFilterNode;
+  private readonly keyboardAmp: GainNode;
   private readonly noiseBuffer: AudioBuffer;
+  private keyboardOsc: OscillatorNode | null = null;
 
   private drumPreset: DrumPreset;
   private bassPreset: BassPreset;
@@ -55,6 +59,20 @@ export class AudioEngine {
     this.bassBus = this.ctx.createGain();
     this.bassBus.gain.value = 0.5;
     this.bassBus.connect(this.master);
+
+    this.keyboardBus = this.ctx.createGain();
+    this.keyboardBus.gain.value = 0.34;
+    this.keyboardBus.connect(this.master);
+
+    this.keyboardFilter = this.ctx.createBiquadFilter();
+    this.keyboardFilter.type = 'lowpass';
+    this.keyboardFilter.Q.value = 2.8;
+    this.keyboardFilter.frequency.value = 1600;
+
+    this.keyboardAmp = this.ctx.createGain();
+    this.keyboardAmp.gain.value = 0;
+    this.keyboardFilter.connect(this.keyboardAmp);
+    this.keyboardAmp.connect(this.keyboardBus);
 
     this.noiseBuffer = createNoiseBuffer(this.ctx);
     this.pad = new PadSynth(this.ctx, this.master);
@@ -149,6 +167,72 @@ export class AudioEngine {
       this.start();
     }
     return this.playing;
+  }
+
+  /**
+   * Independent monophonic bass voice (held while key is down).
+   * Also snaps pad root/pitch via setRootMidi. Does not start transport.
+   * @returns pad xNorm after root snap (for UI cursor).
+   */
+  keyboardNoteOn(midi: number): number {
+    this.unlock();
+    const xNorm = this.pad.setRootMidi(midi);
+    const now = this.ctx.currentTime;
+    const hz = midiToHz(midi);
+    this.ensureKeyboardOsc();
+    const osc = this.keyboardOsc;
+    if (!osc) {
+      return xNorm;
+    }
+    osc.frequency.setValueAtTime(Math.max(hz, 20), now);
+    this.keyboardFilter.frequency.setValueAtTime(
+      Math.min(Math.max(hz * 7, 400), 2800),
+      now,
+    );
+    const g = this.keyboardAmp.gain;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(Math.max(g.value, 0.0001), now);
+    g.exponentialRampToValueAtTime(0.82, now + 0.012);
+    return xNorm;
+  }
+
+  /** Legato retarget while another key remains held. */
+  keyboardNoteMove(midi: number): number {
+    const xNorm = this.pad.setRootMidi(midi);
+    if (!this.keyboardOsc) {
+      return xNorm;
+    }
+    const now = this.ctx.currentTime;
+    const hz = midiToHz(midi);
+    this.keyboardOsc.frequency.setTargetAtTime(Math.max(hz, 20), now, 0.01);
+    this.keyboardFilter.frequency.setTargetAtTime(
+      Math.min(Math.max(hz * 7, 400), 2800),
+      now,
+      0.015,
+    );
+    return xNorm;
+  }
+
+  keyboardNoteOff(): void {
+    if (!this.keyboardOsc) {
+      return;
+    }
+    const now = this.ctx.currentTime;
+    const g = this.keyboardAmp.gain;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(Math.max(g.value, 0.0001), now);
+    g.exponentialRampToValueAtTime(0.0001, now + 0.08);
+  }
+
+  private ensureKeyboardOsc(): void {
+    if (this.keyboardOsc) {
+      return;
+    }
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.connect(this.keyboardFilter);
+    osc.start();
+    this.keyboardOsc = osc;
   }
 
   private schedule(): void {
