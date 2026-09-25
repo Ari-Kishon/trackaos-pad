@@ -58,6 +58,7 @@ export class AudioEngine {
 
     this.noiseBuffer = createNoiseBuffer(this.ctx);
     this.pad = new PadSynth(this.ctx, this.master);
+    this.pad.setBpm(this.bpm);
 
     const firstDrum = DRUM_PRESETS[0];
     const firstBass = BASS_PRESETS[0];
@@ -103,6 +104,7 @@ export class AudioEngine {
 
   setBpm(value: number): void {
     this.bpm = clampBpm(value);
+    this.pad.setBpm(this.bpm);
   }
 
   setDrumPreset(id: string): void {
@@ -175,6 +177,7 @@ export class AudioEngine {
         );
       }
     }
+    this.pad.onTransportStep(step, time, stepDur);
   }
 
   private playDrum(kind: DrumHitKind, time: number, velocity: number): void {
