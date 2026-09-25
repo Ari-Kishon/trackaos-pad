@@ -19,9 +19,9 @@ npm run start      # build + preview
 2. Set **BPM**, then press **START**, or press the pad (transport starts on first pad engage).
 3. Drag on the pad:
    - **HOLD** — X pitch, Y filter
-   - **ARP** — X chord root, Y arp rate (synced to transport)
+   - **ARP** — X chord root, Y octave span (1–3), 16th-synced
    - **GATE** — X pitch, Y gate rate (synced to transport)
-   Release fades the voice.
+   Release ends the voice.
 
 Aesthetic is sparse HUD — cool near-black ground, hairline grid, pale amber accent.
 
