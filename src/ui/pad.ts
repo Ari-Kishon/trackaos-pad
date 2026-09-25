@@ -10,49 +10,97 @@ export type PadHandlers = {
   onRelease: () => void;
 };
 
+type Norm = { x: number; y: number };
+
 export function createPad(surface: HTMLElement, handlers: PadHandlers): {
   destroy: () => void;
   setVisual: (pointer: PadPointer) => void;
 } {
-  const crosshair = document.createElement('div');
-  crosshair.className = 'pad-crosshair';
-  crosshair.setAttribute('aria-hidden', 'true');
+  const crossV = document.createElement('div');
+  crossV.className = 'pad-cross-v';
+  crossV.setAttribute('aria-hidden', 'true');
+
+  const crossH = document.createElement('div');
+  crossH.className = 'pad-cross-h';
+  crossH.setAttribute('aria-hidden', 'true');
 
   const cursor = document.createElement('div');
   cursor.className = 'pad-cursor';
   cursor.setAttribute('aria-hidden', 'true');
 
-  surface.append(crosshair, cursor);
+  surface.append(crossV, crossH, cursor);
 
   let pointerId: number | null = null;
+  let rect = surface.getBoundingClientRect();
+  let pending: Norm | null = null;
+  let pendingActive = false;
+  let rafId = 0;
+  let painted: Norm = { x: 0.5, y: 0.5 };
+  let paintedActive = false;
 
-  const toNorm = (clientX: number, clientY: number): { x: number; y: number } => {
-    const rect = surface.getBoundingClientRect();
-    const x = (clientX - rect.left) / Math.max(rect.width, 1);
-    const y = (clientY - rect.top) / Math.max(rect.height, 1);
+  const refreshRect = (): void => {
+    rect = surface.getBoundingClientRect();
+  };
+
+  const toNorm = (clientX: number, clientY: number): Norm => {
+    const w = Math.max(rect.width, 1);
+    const h = Math.max(rect.height, 1);
     return {
-      x: Math.min(1, Math.max(0, x)),
-      y: Math.min(1, Math.max(0, y)),
+      x: Math.min(1, Math.max(0, (clientX - rect.left) / w)),
+      y: Math.min(1, Math.max(0, (clientY - rect.top) / h)),
     };
   };
 
-  const paint = (norm: { x: number; y: number }, active: boolean): void => {
-    surface.classList.toggle('is-active', active);
-    crosshair.style.setProperty('--pad-x', `${String(norm.x * 100)}%`);
-    crosshair.style.setProperty('--pad-y', `${String(norm.y * 100)}%`);
-    cursor.style.setProperty('--pad-x', `${String(norm.x * 100)}%`);
-    cursor.style.setProperty('--pad-y', `${String(norm.y * 100)}%`);
-    cursor.classList.toggle('is-on', active);
+  const applyPaint = (norm: Norm, active: boolean): void => {
+    const xPx = norm.x * rect.width;
+    const yPx = norm.y * rect.height;
+    crossV.style.transform = `translate3d(${String(xPx)}px,0,0)`;
+    crossH.style.transform = `translate3d(0,${String(yPx)}px,0)`;
+    cursor.style.transform = `translate3d(${String(xPx)}px,${String(yPx)}px,0)`;
+    if (active !== paintedActive) {
+      surface.classList.toggle('is-active', active);
+      cursor.classList.toggle('is-on', active);
+      paintedActive = active;
+    }
+    painted = norm;
+  };
+
+  const flush = (): void => {
+    rafId = 0;
+    if (!pending) {
+      return;
+    }
+    applyPaint(pending, pendingActive);
+    pending = null;
+  };
+
+  const schedulePaint = (norm: Norm, active: boolean): void => {
+    pending = norm;
+    pendingActive = active;
+    if (rafId === 0) {
+      rafId = requestAnimationFrame(flush);
+    }
+  };
+
+  const paintNow = (norm: Norm, active: boolean): void => {
+    pending = null;
+    if (rafId !== 0) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    applyPaint(norm, active);
   };
 
   const onPointerDown = (event: PointerEvent): void => {
     if (pointerId !== null) {
       return;
     }
+    event.preventDefault();
     pointerId = event.pointerId;
+    refreshRect();
     surface.setPointerCapture(event.pointerId);
     const norm = toNorm(event.clientX, event.clientY);
-    paint(norm, true);
+    paintNow(norm, true);
     handlers.onEngage(norm);
   };
 
@@ -61,7 +109,7 @@ export function createPad(surface: HTMLElement, handlers: PadHandlers): {
       return;
     }
     const norm = toNorm(event.clientX, event.clientY);
-    paint(norm, true);
+    schedulePaint(norm, true);
     handlers.onMove(norm);
   };
 
@@ -74,16 +122,23 @@ export function createPad(surface: HTMLElement, handlers: PadHandlers): {
       surface.releasePointerCapture(event.pointerId);
     }
     const norm = toNorm(event.clientX, event.clientY);
-    paint(norm, false);
+    paintNow(norm, false);
     handlers.onRelease();
+  };
+
+  const onResize = (): void => {
+    refreshRect();
+    applyPaint(painted, paintedActive);
   };
 
   surface.addEventListener('pointerdown', onPointerDown);
   surface.addEventListener('pointermove', onPointerMove);
   surface.addEventListener('pointerup', endPointer);
   surface.addEventListener('pointercancel', endPointer);
+  window.addEventListener('resize', onResize);
+  window.addEventListener('scroll', onResize, true);
 
-  paint({ x: 0.5, y: 0.5 }, false);
+  paintNow({ x: 0.5, y: 0.5 }, false);
 
   return {
     destroy: () => {
@@ -91,11 +146,17 @@ export function createPad(surface: HTMLElement, handlers: PadHandlers): {
       surface.removeEventListener('pointermove', onPointerMove);
       surface.removeEventListener('pointerup', endPointer);
       surface.removeEventListener('pointercancel', endPointer);
-      crosshair.remove();
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onResize, true);
+      if (rafId !== 0) {
+        cancelAnimationFrame(rafId);
+      }
+      crossV.remove();
+      crossH.remove();
       cursor.remove();
     },
     setVisual: (pointer) => {
-      paint({ x: pointer.x, y: pointer.y }, pointer.active);
+      paintNow({ x: pointer.x, y: pointer.y }, pointer.active);
     },
   };
 }
