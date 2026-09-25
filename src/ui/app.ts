@@ -77,7 +77,7 @@ export function mountApp(root: HTMLElement): void {
       padMetaY.textContent = 'Y · FILTER';
     } else if (mode === 'arp') {
       padMetaX.textContent = 'X · ROOT';
-      padMetaY.textContent = 'Y · RATE';
+      padMetaY.textContent = 'Y · OCTAVE';
     } else {
       padMetaX.textContent = 'X · PITCH';
       padMetaY.textContent = 'Y · RATE';
