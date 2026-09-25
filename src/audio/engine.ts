@@ -46,9 +46,6 @@ export class AudioEngine {
   private currentStep = 0;
   private nextNoteTime = 0;
   private timerId: ReturnType<typeof setInterval> | null = null;
-  /** When pad is live, it owns the melodic lane (bass pattern yields). */
-  private bassPadDucked = false;
-  private readonly bassBusLevel = 0.5;
 
   constructor() {
     this.ctx = new AudioContext();
@@ -173,12 +170,8 @@ export class AudioEngine {
     return this.playing;
   }
 
-  /**
-   * Pad engage — takes over the bass/synth lane like iMS-20 Kaoss on the
-   * sequenced synth (pattern ducks; pad is the sounding melodic voice).
-   */
+  /** Pad engage — layers over drums + bass (no lane takeover). */
   padNoteOn(xNorm: number, yNorm: number): void {
-    this.setBassPadDuck(true);
     this.pad.noteOn(xNorm, yNorm);
   }
 
@@ -188,7 +181,6 @@ export class AudioEngine {
 
   padNoteOff(): void {
     this.pad.noteOff();
-    this.setBassPadDuck(false);
   }
 
   /**
@@ -267,35 +259,18 @@ export class AudioEngine {
         this.playDrum(hit.kind, time, hit.velocity);
       }
     }
-    // Pad owns the melodic lane while held — skip sequencing into the same role.
-    if (!this.pad.isActive) {
-      for (const note of this.bassPreset.notes) {
-        if (note.step === step) {
-          this.playBass(
-            note.midi,
-            time,
-            note.durationSteps * stepDur,
-            note.velocity,
-            this.bassPreset.voice,
-          );
-        }
+    for (const note of this.bassPreset.notes) {
+      if (note.step === step) {
+        this.playBass(
+          note.midi,
+          time,
+          note.durationSteps * stepDur,
+          note.velocity,
+          this.bassPreset.voice,
+        );
       }
     }
     this.pad.onTransportStep(step, time, stepDur);
-  }
-
-  /** Duck ringing bass one-shots the moment Kaoss takes the synth lane. */
-  private setBassPadDuck(duck: boolean): void {
-    if (duck === this.bassPadDucked) {
-      return;
-    }
-    this.bassPadDucked = duck;
-    const now = this.ctx.currentTime;
-    const g = this.bassBus.gain;
-    const target = duck ? 0.0001 : this.bassBusLevel;
-    g.cancelScheduledValues(now);
-    g.setValueAtTime(Math.max(g.value, 0.0001), now);
-    g.exponentialRampToValueAtTime(target, now + 0.035);
   }
 
   private playDrum(kind: DrumHitKind, time: number, velocity: number): void {

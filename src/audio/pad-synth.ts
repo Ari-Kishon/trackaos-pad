@@ -64,8 +64,8 @@ export class PadSynth {
   constructor(ctx: AudioContext, destination: AudioNode) {
     this.ctx = ctx;
     this.output = ctx.createGain();
-    // Hot enough to sit with kick/bass once the pattern ducks under the pad.
-    this.output.gain.value = 0.95;
+    // Sit under kick/bass so the pad layers without masking the groove.
+    this.output.gain.value = 0.55;
     this.output.connect(destination);
 
     this.filter = ctx.createBiquadFilter();
