@@ -212,6 +212,7 @@ body {
 .pad-stage {
   display: grid;
   place-items: center;
+  gap: 0.85rem;
   min-height: 0;
 }
 
@@ -219,6 +220,71 @@ body {
   width: var(--pad-size);
   display: grid;
   gap: 0.55rem;
+}
+
+.key-strip {
+  width: var(--pad-size);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.piano {
+  position: relative;
+  width: 100%;
+}
+
+.piano-whites {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+}
+
+.piano-blacks {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 58%;
+  pointer-events: none;
+}
+
+.piano-key {
+  display: grid;
+  place-items: end center;
+  padding: 0 0 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  user-select: none;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.piano-key-white {
+  height: 3.1rem;
+  background: transparent;
+}
+
+.piano-key-black {
+  position: absolute;
+  top: 0;
+  left: calc(var(--slot) * (100% / 8) - 5.5%);
+  width: 11%;
+  height: 100%;
+  z-index: 1;
+  background: var(--ground);
+  border-color: var(--rule-strong);
+  place-items: end center;
+  padding-bottom: 0.28rem;
+}
+
+.piano-key.is-pressed {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .xy-pad {

@@ -7,6 +7,7 @@ import {
   DEFAULT_BPM,
   DRUM_PRESETS,
 } from '../audio/presets';
+import { createKeyStrip, isTypingTarget, midiForBassKey } from './keyboard';
 import { createPad } from './pad';
 
 export function mountApp(root: HTMLElement): void {
@@ -89,7 +90,9 @@ export function mountApp(root: HTMLElement): void {
   syncPadMeta(engine.pad.padMode);
 
   padFrame.append(padSurface, padMeta);
-  stage.append(padFrame);
+
+  const keyStrip = createKeyStrip();
+  stage.append(padFrame, keyStrip.root);
 
   root.append(header, controls, stage);
 
@@ -115,6 +118,8 @@ export function mountApp(root: HTMLElement): void {
     bpmField.number.value = String(bpm);
     setStatus(engine.isPlaying, engine.pad.isActive);
   };
+
+  let padVisual = { x: 0.5, y: 0.5, active: false };
 
   // Unlock AudioContext on first user gesture anywhere in the shell.
   root.addEventListener('pointerdown', unlockAudio, { once: true });
@@ -151,23 +156,96 @@ export function mountApp(root: HTMLElement): void {
     syncTransportUi();
   });
 
-  createPad(padSurface, {
+  const pad = createPad(padSurface, {
     onEngage: (norm) => {
       unlockAudio();
       if (!engine.isPlaying) {
         engine.start();
         syncTransportUi();
       }
+      padVisual = { x: norm.x, y: norm.y, active: true };
       engine.pad.noteOn(norm.x, norm.y);
       setStatus(engine.isPlaying, true);
     },
     onMove: (norm) => {
+      padVisual = { x: norm.x, y: norm.y, active: true };
       engine.pad.noteMove(norm.x, norm.y);
     },
     onRelease: () => {
+      padVisual = { ...padVisual, active: false };
       engine.pad.noteOff();
       setStatus(engine.isPlaying, false);
     },
+  });
+
+  const paintRootX = (xNorm: number): void => {
+    padVisual = { ...padVisual, x: xNorm };
+    pad.setVisual(padVisual);
+  };
+
+  /** Most-recently-pressed held keys (last = sounding). */
+  const heldKeys: string[] = [];
+
+  const voiceFromHeld = (): void => {
+    const top = heldKeys[heldKeys.length - 1];
+    if (!top) {
+      engine.keyboardNoteOff();
+      return;
+    }
+    const midi = midiForBassKey(top);
+    if (midi === undefined) {
+      return;
+    }
+    const xNorm = engine.keyboardNoteMove(midi);
+    paintRootX(xNorm);
+  };
+
+  window.addEventListener('keydown', (event) => {
+    if (event.repeat || isTypingTarget(event.target)) {
+      return;
+    }
+    const key = event.key.toLowerCase();
+    const midi = midiForBassKey(key);
+    if (midi === undefined) {
+      return;
+    }
+    event.preventDefault();
+    if (heldKeys.includes(key)) {
+      return;
+    }
+    heldKeys.push(key);
+    keyStrip.setPressed(key, true);
+    unlockAudio();
+    const xNorm = engine.keyboardNoteOn(midi);
+    paintRootX(xNorm);
+  });
+
+  window.addEventListener('keyup', (event) => {
+    if (isTypingTarget(event.target)) {
+      return;
+    }
+    const key = event.key.toLowerCase();
+    const midi = midiForBassKey(key);
+    if (midi === undefined) {
+      return;
+    }
+    event.preventDefault();
+    const idx = heldKeys.indexOf(key);
+    if (idx === -1) {
+      return;
+    }
+    heldKeys.splice(idx, 1);
+    keyStrip.setPressed(key, false);
+    voiceFromHeld();
+  });
+
+  window.addEventListener('blur', () => {
+    if (heldKeys.length === 0) {
+      return;
+    }
+    heldKeys.length = 0;
+    keyStrip.clearPressed();
+    engine.keyboardNoteOff();
   });
 
   applyBpm(DEFAULT_BPM);
