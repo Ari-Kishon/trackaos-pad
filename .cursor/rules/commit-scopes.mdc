@@ -1,0 +1,18 @@
+---
+description: Allowed conventional-commit scopes for this repo
+alwaysApply: true
+---
+
+# Commit scopes
+
+Titles must be `type(scope): subject` with **exactly one** scope from this list.
+
+| Scope | Use for |
+|-------|---------|
+| `pad` | XY pad interaction, pad synth voice, pad visuals |
+| `audio` | Web Audio engine, transport, drum/bass loops, presets |
+| `ui` | Layout, HUD, selectors, typography, styles, shell markup |
+| `chore` | Tooling, config, deps, Cursor rules, CI |
+| `docs` | README and documentation only |
+
+Do not invent scopes. Add a row here first if a new area is needed.
