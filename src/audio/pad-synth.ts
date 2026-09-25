@@ -52,7 +52,8 @@ export class PadSynth {
   constructor(ctx: AudioContext, destination: AudioNode) {
     this.ctx = ctx;
     this.output = ctx.createGain();
-    this.output.gain.value = 0.38;
+    // Hot enough to sit with kick/bass once the pattern ducks under the pad.
+    this.output.gain.value = 0.95;
     this.output.connect(destination);
 
     this.filter = ctx.createBiquadFilter();
@@ -209,7 +210,7 @@ export class PadSynth {
       this.ensureHoldOsc();
       this.filter.Q.setValueAtTime(3.2, now);
       this.setHoldParams(xNorm, yNorm, now, true);
-      this.openHoldAmp(now, 0.85, 0.012);
+      this.openHoldAmp(now, 0.95, 0.012);
       return;
     }
 
@@ -276,7 +277,7 @@ export class PadSynth {
       }
       this.filter.Q.setValueAtTime(8.5, time);
       this.filter.frequency.setValueAtTime(Math.min(freq * 8, 4200), time);
-      this.openHoldAmp(time, 0.78, force ? 0.008 : 0.004);
+      this.openHoldAmp(time, 0.95, force ? 0.008 : 0.004);
       this.imsRetriggerAt = Number.POSITIVE_INFINITY;
       return;
     }
@@ -325,7 +326,7 @@ export class PadSynth {
     filter.frequency.setValueAtTime(Math.max(cutoff, 200), time);
 
     const gain = this.ctx.createGain();
-    const peak = 0.72;
+    const peak = 0.95;
     const attack = 0.004;
     const releaseAt = time + Math.max(duration, attack + 0.02);
     gain.gain.setValueAtTime(0.0001, time);
@@ -344,7 +345,7 @@ export class PadSynth {
   private playImsOneShot(freq: number, time: number, duration: number): void {
     const f = Math.max(freq, 20);
     const merge = this.ctx.createGain();
-    merge.gain.value = 0.55;
+    merge.gain.value = 0.9;
 
     const saw = this.ctx.createOscillator();
     saw.type = 'sawtooth';
@@ -371,7 +372,7 @@ export class PadSynth {
     );
 
     const gain = this.ctx.createGain();
-    const peak = 0.7;
+    const peak = 0.92;
     const attack = 0.003;
     const releaseAt = time + Math.max(duration, attack + 0.02);
     gain.gain.setValueAtTime(0.0001, time);

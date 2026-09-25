@@ -204,14 +204,14 @@ export function mountApp(root: HTMLElement): void {
         engine.start();
         syncTransportUi();
       }
-      engine.pad.noteOn(norm.x, norm.y);
+      engine.padNoteOn(norm.x, norm.y);
       setStatus(engine.isPlaying, true);
     },
     onMove: (norm) => {
-      engine.pad.noteMove(norm.x, norm.y);
+      engine.padNoteMove(norm.x, norm.y);
     },
     onRelease: () => {
-      engine.pad.noteOff();
+      engine.padNoteOff();
       setStatus(engine.isPlaying, false);
     },
   });
