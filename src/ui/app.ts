@@ -6,6 +6,8 @@ import {
   BPM_MIN,
   DEFAULT_BPM,
   DRUM_PRESETS,
+  SYNTH_VOICES,
+  type SynthVoiceId,
 } from '../audio/presets';
 import {
   DEFAULT_KEY_PC,
@@ -51,6 +53,12 @@ export function mountApp(root: HTMLElement): void {
     BASS_PRESETS.map((p) => ({ value: p.id, label: p.label })),
     engine.bassPresetId,
   );
+  const synthField = fieldSelect(
+    'SYNTH',
+    'synth-voice',
+    SYNTH_VOICES.map((v) => ({ value: v.id, label: v.label })),
+    engine.pad.synthVoiceId,
+  );
   const modeField = fieldSelect(
     'PAD',
     'pad-mode',
@@ -80,6 +88,7 @@ export function mountApp(root: HTMLElement): void {
   controls.append(
     drumField.root,
     bassField.root,
+    synthField.root,
     modeField.root,
     keyField.root,
     scaleField.root,
@@ -164,6 +173,11 @@ export function mountApp(root: HTMLElement): void {
   bassField.select.addEventListener('change', () => {
     unlockAudio();
     engine.setBassPreset(bassField.select.value);
+  });
+
+  synthField.select.addEventListener('change', () => {
+    unlockAudio();
+    engine.pad.setSynthVoice(synthField.select.value as SynthVoiceId);
   });
 
   modeField.select.addEventListener('change', () => {

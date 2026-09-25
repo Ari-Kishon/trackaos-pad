@@ -7,6 +7,7 @@ import {
   midiToHz,
   secondsPerStep,
   type BassPreset,
+  type BassVoice,
   type DrumHitKind,
   type DrumPreset,
 } from './presets';
@@ -430,31 +431,61 @@ export class AudioEngine {
     time: number,
     duration: number,
     velocity: number,
-    voice: BassPreset['voice'],
+    voice: BassVoice,
   ): void {
+    if (voice === 'reese') {
+      this.playReeseBass(midi, time, duration, velocity);
+      return;
+    }
+
     const osc = this.ctx.createOscillator();
-    osc.type = voice === 0 ? 'sine' : voice === 1 ? 'sawtooth' : 'square';
+    osc.type =
+      voice === 'sub'
+        ? 'sine'
+        : voice === 'acid'
+          ? 'sawtooth'
+          : voice === 'pluck'
+            ? 'triangle'
+            : 'square';
     osc.frequency.value = midiToHz(midi);
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.Q.value = voice === 1 ? 9 : voice === 2 ? 2.4 : 0.9;
-    const startCut = voice === 0 ? 180 : voice === 1 ? 1600 : 520;
+    filter.Q.value =
+      voice === 'acid' ? 9 : voice === 'pluck' ? 4.5 : voice === 'pulse' ? 2.4 : 0.9;
+    const startCut =
+      voice === 'sub'
+        ? 180
+        : voice === 'acid'
+          ? 1600
+          : voice === 'pluck'
+            ? 2200
+            : 520;
     filter.frequency.setValueAtTime(startCut, time);
-    if (voice === 1) {
+    if (voice === 'acid' || voice === 'pluck') {
       filter.frequency.exponentialRampToValueAtTime(
-        Math.max(120, startCut * 0.12),
-        time + Math.max(duration * 0.65, 0.05),
+        Math.max(120, startCut * (voice === 'pluck' ? 0.08 : 0.12)),
+        time + Math.max(duration * (voice === 'pluck' ? 0.35 : 0.65), 0.04),
       );
     }
 
     const gain = this.ctx.createGain();
-    const peak = (voice === 0 ? 0.78 : voice === 1 ? 0.42 : 0.4) * velocity;
-    const attack = voice === 1 ? 0.004 : 0.01;
+    const peak =
+      (voice === 'sub'
+        ? 0.78
+        : voice === 'acid'
+          ? 0.42
+          : voice === 'pluck'
+            ? 0.48
+            : 0.4) * velocity;
+    const attack = voice === 'acid' || voice === 'pluck' ? 0.004 : 0.01;
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.exponentialRampToValueAtTime(peak, time + attack);
-    const releaseStart = Math.max(time + duration * 0.5, time + attack + 0.02);
-    gain.gain.setValueAtTime(peak * 0.8, releaseStart);
+    const releaseStart = Math.max(
+      time + duration * (voice === 'pluck' ? 0.25 : 0.5),
+      time + attack + 0.02,
+    );
+    gain.gain.setValueAtTime(peak * (voice === 'pluck' ? 0.45 : 0.8), releaseStart);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
 
     osc.connect(filter);
@@ -462,5 +493,48 @@ export class AudioEngine {
     gain.connect(this.bassBus);
     osc.start(time);
     osc.stop(time + duration + 0.02);
+  }
+
+  /** Detuned dual saw — thick mid-bass bed. */
+  private playReeseBass(
+    midi: number,
+    time: number,
+    duration: number,
+    velocity: number,
+  ): void {
+    const f = midiToHz(midi);
+    const merge = this.ctx.createGain();
+    merge.gain.value = 0.72;
+
+    const a = this.ctx.createOscillator();
+    a.type = 'sawtooth';
+    a.frequency.setValueAtTime(f, time);
+
+    const b = this.ctx.createOscillator();
+    b.type = 'sawtooth';
+    b.frequency.setValueAtTime(f * 1.007, time);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 1.6;
+    filter.frequency.setValueAtTime(380, time);
+    filter.frequency.exponentialRampToValueAtTime(140, time + Math.max(duration * 0.8, 0.08));
+
+    const gain = this.ctx.createGain();
+    const peak = 0.55 * velocity;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.exponentialRampToValueAtTime(peak, time + 0.02);
+    gain.gain.setValueAtTime(peak * 0.85, time + duration * 0.6);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+
+    a.connect(merge);
+    b.connect(merge);
+    merge.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.bassBus);
+    a.start(time);
+    b.start(time);
+    a.stop(time + duration + 0.02);
+    b.stop(time + duration + 0.02);
   }
 }

@@ -1,4 +1,10 @@
-import { DEFAULT_BPM, midiToHz, secondsPerStep } from './presets';
+import {
+  DEFAULT_BPM,
+  DEFAULT_SYNTH_VOICE,
+  midiToHz,
+  secondsPerStep,
+  type SynthVoiceId,
+} from './presets';
 import {
   DEFAULT_KEY_PC,
   DEFAULT_SCALE_ID,
@@ -33,8 +39,11 @@ export class PadSynth {
   private readonly filter: BiquadFilterNode;
   private readonly amp: GainNode;
   private osc: OscillatorNode | null = null;
+  /** Second VCO for MS-20 / pulse detuned hold voices. */
+  private oscB: OscillatorNode | null = null;
   private active = false;
   private mode: PadMode = 'hold';
+  private voice: SynthVoiceId = DEFAULT_SYNTH_VOICE;
   private xNorm = 0.5;
   private yNorm = 0.5;
   private bpm = DEFAULT_BPM;
@@ -76,6 +85,10 @@ export class PadSynth {
     return this.mode;
   }
 
+  get synthVoiceId(): SynthVoiceId {
+    return this.voice;
+  }
+
   get keyRootMidi(): number {
     return this.rootMidi;
   }
@@ -86,6 +99,26 @@ export class PadSynth {
 
   setBpm(bpm: number): void {
     this.bpm = bpm;
+  }
+
+  /** Timbre for the pad voice — live retarget if held. */
+  setSynthVoice(id: SynthVoiceId): void {
+    if (this.voice === id) {
+      return;
+    }
+    this.voice = id;
+    if (!this.active) {
+      this.teardownHoldOsc();
+      return;
+    }
+    const now = this.ctx.currentTime;
+    if (this.mode === 'hold' || (this.mode === 'ims' && this.imsRetriggerAt === Number.POSITIVE_INFINITY)) {
+      this.teardownHoldOsc();
+      this.ensureHoldOsc();
+      this.applyHoldVoiceShape(now);
+      this.setHoldParams(this.xNorm, this.yNorm, now, true);
+      this.openHoldAmp(now, 0.95, 0.008);
+    }
   }
 
   /**
@@ -208,7 +241,7 @@ export class PadSynth {
 
     if (this.mode === 'hold') {
       this.ensureHoldOsc();
-      this.filter.Q.setValueAtTime(3.2, now);
+      this.applyHoldVoiceShape(now);
       this.setHoldParams(xNorm, yNorm, now, true);
       this.openHoldAmp(now, 0.95, 0.012);
       return;
@@ -269,14 +302,20 @@ export class PadSynth {
     this.lastDegree = degree;
 
     if (!Number.isFinite(frac)) {
-      // LEGATO — dual-osc MS-20-ish sustain while held.
+      // LEGATO — sustain while held; timbre from synth voice.
       this.ensureHoldOsc();
+      this.applyHoldVoiceShape(time);
       if (this.osc) {
-        this.osc.type = 'sawtooth';
         this.osc.frequency.setValueAtTime(freq, time);
       }
-      this.filter.Q.setValueAtTime(8.5, time);
-      this.filter.frequency.setValueAtTime(Math.min(freq * 8, 4200), time);
+      if (this.oscB) {
+        this.oscB.frequency.setValueAtTime(freq * detuneRatio(this.voice), time);
+      }
+      this.filter.Q.setValueAtTime(holdFilterQ(this.voice, true), time);
+      this.filter.frequency.setValueAtTime(
+        Math.min(freq * holdCutoffMul(this.voice, true), 4800),
+        time,
+      );
       this.openHoldAmp(time, 0.95, force ? 0.008 : 0.004);
       this.imsRetriggerAt = Number.POSITIVE_INFINITY;
       return;
@@ -285,7 +324,7 @@ export class PadSynth {
     // Gated one-shots: duration + re-fire interval from Y (iMS-20 gate %).
     this.silenceHold(time);
     const duration = Math.max(stepDur * frac * 0.92, 0.025);
-    this.playImsOneShot(freq, time, duration);
+    this.playVoiceOneShot(freq, time, duration, true);
     this.imsRetriggerAt = time + Math.max(duration, stepDur * frac);
   }
 
@@ -295,14 +334,12 @@ export class PadSynth {
     const chord = buildArpDegrees(this.rootMidi, this.scaleId, startDegree, octaves);
     const freq = chord[this.arpIndex % chord.length] ?? this.freqFromDegree(startDegree);
     this.arpIndex += 1;
-    const cutoff = Math.min(freq * 6, 5200);
-    this.playOneShot(freq, time, duration, cutoff);
+    this.playVoiceOneShot(freq, time, duration, false);
   }
 
   private fireGateNote(time: number, duration: number): void {
     const freq = this.freqFromDegree(degreeFromXNorm(this.xNorm, this.scaleId));
-    const cutoff = Math.min(freq * 5.5, 4800);
-    this.playOneShot(freq, time, duration, cutoff);
+    this.playVoiceOneShot(freq, time, duration, false);
   }
 
   private freqFromDegree(degree: number): number {
@@ -310,25 +347,44 @@ export class PadSynth {
   }
 
   /** Independent voice — avoids shared-amp automation fights. */
-  private playOneShot(
+  private playVoiceOneShot(
     freq: number,
     time: number,
     duration: number,
-    cutoff: number,
+    imsGate: boolean,
   ): void {
+    const f = Math.max(freq, 20);
+    const releaseAt = time + Math.max(duration, 0.024);
+
+    if (this.voice === 'ms20') {
+      this.playMs20OneShot(f, time, duration, releaseAt, imsGate);
+      return;
+    }
+
+    if (this.voice === 'pulse') {
+      this.playPulseOneShot(f, time, duration, releaseAt);
+      return;
+    }
+
     const osc = this.ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(Math.max(freq, 20), time);
+    osc.type = oscTypeForVoice(this.voice);
+    osc.frequency.setValueAtTime(f, time);
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.Q.value = 2.4;
-    filter.frequency.setValueAtTime(Math.max(cutoff, 200), time);
+    filter.Q.value = this.voice === 'sine' ? 0.7 : imsGate ? 6.5 : 2.4;
+    const cutoffMul = this.voice === 'sine' ? 3.2 : imsGate ? 7.5 : 5.5;
+    filter.frequency.setValueAtTime(Math.min(Math.max(f * cutoffMul, 200), 5200), time);
+    if (imsGate && this.voice !== 'sine') {
+      filter.frequency.exponentialRampToValueAtTime(
+        Math.max(f * 1.6, 160),
+        time + Math.max(duration * 0.7, 0.04),
+      );
+    }
 
     const gain = this.ctx.createGain();
-    const peak = 0.95;
+    const peak = this.voice === 'sine' ? 1.05 : 0.95;
     const attack = 0.004;
-    const releaseAt = time + Math.max(duration, attack + 0.02);
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.exponentialRampToValueAtTime(peak, time + attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, releaseAt);
@@ -341,9 +397,13 @@ export class PadSynth {
     osc.stop(releaseAt + 0.03);
   }
 
-  /** Dual VCO + HPF→LPF cascade — aggressive MS-20 flavour for IMS. */
-  private playImsOneShot(freq: number, time: number, duration: number): void {
-    const f = Math.max(freq, 20);
+  private playMs20OneShot(
+    f: number,
+    time: number,
+    duration: number,
+    releaseAt: number,
+    aggressive: boolean,
+  ): void {
     const merge = this.ctx.createGain();
     merge.gain.value = 0.9;
 
@@ -359,12 +419,12 @@ export class PadSynth {
 
     const hp = this.ctx.createBiquadFilter();
     hp.type = 'highpass';
-    hp.Q.value = 3.4;
+    hp.Q.value = aggressive ? 3.4 : 2.2;
     hp.frequency.setValueAtTime(Math.min(f * 0.85, 900), time);
 
     const lp = this.ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.Q.value = 9.5;
+    lp.Q.value = aggressive ? 9.5 : 5.5;
     lp.frequency.setValueAtTime(Math.min(f * 7.5, 4800), time);
     lp.frequency.exponentialRampToValueAtTime(
       Math.max(f * 1.8, 180),
@@ -374,7 +434,6 @@ export class PadSynth {
     const gain = this.ctx.createGain();
     const peak = 0.92;
     const attack = 0.003;
-    const releaseAt = time + Math.max(duration, attack + 0.02);
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.exponentialRampToValueAtTime(peak, time + attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, releaseAt);
@@ -393,6 +452,52 @@ export class PadSynth {
     square.stop(releaseAt + 0.03);
   }
 
+  private playPulseOneShot(
+    f: number,
+    time: number,
+    duration: number,
+    releaseAt: number,
+  ): void {
+    const merge = this.ctx.createGain();
+    merge.gain.value = 0.85;
+
+    const a = this.ctx.createOscillator();
+    a.type = 'square';
+    a.frequency.setValueAtTime(f, time);
+
+    const b = this.ctx.createOscillator();
+    b.type = 'square';
+    b.frequency.setValueAtTime(f * 2.01, time);
+    const bGain = this.ctx.createGain();
+    bGain.gain.value = 0.35;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 4.2;
+    filter.frequency.setValueAtTime(Math.min(f * 6, 4000), time);
+    filter.frequency.exponentialRampToValueAtTime(
+      Math.max(f * 2.2, 220),
+      time + Math.max(duration * 0.55, 0.03),
+    );
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.exponentialRampToValueAtTime(0.95, time + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, releaseAt);
+
+    a.connect(merge);
+    b.connect(bGain);
+    bGain.connect(merge);
+    merge.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.output);
+
+    a.start(time);
+    b.start(time);
+    a.stop(releaseAt + 0.03);
+    b.stop(releaseAt + 0.03);
+  }
+
   private openHoldAmp(time: number, peak: number, attack: number): void {
     const g = this.amp.gain;
     g.cancelScheduledValues(time);
@@ -409,13 +514,66 @@ export class PadSynth {
 
   private ensureHoldOsc(): void {
     if (this.osc) {
+      this.applyHoldVoiceShape(this.ctx.currentTime);
       return;
     }
     const osc = this.ctx.createOscillator();
-    osc.type = 'sawtooth';
     osc.connect(this.filter);
     osc.start();
     this.osc = osc;
+    this.applyHoldVoiceShape(this.ctx.currentTime);
+  }
+
+  private applyHoldVoiceShape(time: number): void {
+    if (!this.osc) {
+      return;
+    }
+    this.osc.type = oscTypeForVoice(this.voice);
+    this.filter.Q.setValueAtTime(holdFilterQ(this.voice, false), time);
+
+    const needsB = this.voice === 'ms20' || this.voice === 'pulse';
+    if (needsB && !this.oscB) {
+      const oscB = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      g.gain.value = this.voice === 'ms20' ? 0.7 : 0.35;
+      oscB.connect(g);
+      g.connect(this.filter);
+      oscB.start();
+      this.oscB = oscB;
+    }
+    if (!needsB && this.oscB) {
+      try {
+        this.oscB.stop();
+      } catch {
+        // already stopped
+      }
+      this.oscB.disconnect();
+      this.oscB = null;
+    }
+    if (this.oscB) {
+      this.oscB.type = 'square';
+    }
+  }
+
+  private teardownHoldOsc(): void {
+    if (this.osc) {
+      try {
+        this.osc.stop();
+      } catch {
+        // already stopped
+      }
+      this.osc.disconnect();
+      this.osc = null;
+    }
+    if (this.oscB) {
+      try {
+        this.oscB.stop();
+      } catch {
+        // already stopped
+      }
+      this.oscB.disconnect();
+      this.oscB = null;
+    }
   }
 
   private setHoldParams(
@@ -429,17 +587,71 @@ export class PadSynth {
     }
     const degree = degreeFromXNorm(xNorm, this.scaleId);
     const freq = this.freqFromDegree(degree);
-    const cutoff = 220 + (1 - clamp01(yNorm)) * 6800;
+    const y = clamp01(yNorm);
+    const cutoff =
+      this.voice === 'sine'
+        ? 180 + (1 - y) * 2400
+        : 220 + (1 - y) * 6800;
     this.lastDegree = degree;
 
     if (snap) {
       this.osc.frequency.setValueAtTime(freq, time);
+      if (this.oscB) {
+        this.oscB.frequency.setValueAtTime(freq * detuneRatio(this.voice), time);
+      }
       this.filter.frequency.setValueAtTime(cutoff, time);
     } else {
       this.osc.frequency.setTargetAtTime(freq, time, 0.012);
+      if (this.oscB) {
+        this.oscB.frequency.setTargetAtTime(freq * detuneRatio(this.voice), time, 0.012);
+      }
       this.filter.frequency.setTargetAtTime(cutoff, time, 0.018);
     }
   }
+}
+
+function oscTypeForVoice(voice: SynthVoiceId): OscillatorType {
+  switch (voice) {
+    case 'square':
+    case 'pulse':
+      return 'square';
+    case 'sine':
+      return 'sine';
+    case 'ms20':
+    case 'saw':
+    default:
+      return 'sawtooth';
+  }
+}
+
+function detuneRatio(voice: SynthVoiceId): number {
+  return voice === 'pulse' ? 2.01 : 1.003;
+}
+
+function holdFilterQ(voice: SynthVoiceId, imsLegato: boolean): number {
+  if (voice === 'sine') {
+    return 0.8;
+  }
+  if (voice === 'ms20') {
+    return imsLegato ? 8.5 : 5.5;
+  }
+  if (voice === 'pulse') {
+    return 4.5;
+  }
+  if (voice === 'square') {
+    return 3.8;
+  }
+  return 3.2;
+}
+
+function holdCutoffMul(voice: SynthVoiceId, imsLegato: boolean): number {
+  if (voice === 'sine') {
+    return 3.5;
+  }
+  if (voice === 'ms20') {
+    return imsLegato ? 8 : 6;
+  }
+  return 6;
 }
 
 /** Top of pad = 3 octaves, bottom = 1. */
