@@ -1,11 +1,13 @@
 /** Computer-keyboard bass map — QWERTY piano layout, base MIDI 36 (C2). */
 
+import { KEY_OPTIONS } from '../audio/scale';
+
 export type BassKeyKind = 'white' | 'black';
 
 export type BassKeyDef = {
   readonly key: string;
   readonly label: string;
-  /** Semitone offset from C of the current octave (0 = C). */
+  /** Semitone offset from the key root of the current octave (0 = root). */
   readonly semi: number;
   readonly kind: BassKeyKind;
   /**
@@ -15,7 +17,7 @@ export type BassKeyDef = {
   readonly slot: number;
 };
 
-/** Octave 0 = C2 (MIDI 36). Range keeps roots in a usable bass/mid band. */
+/** Octave 0 = key root at MIDI 36 + keyPc. Range keeps roots in a usable bass/mid band. */
 export const OCTAVE_MIN = -1;
 export const OCTAVE_MAX = 2;
 export const BASE_OCTAVE_MIDI = 36;
@@ -24,7 +26,7 @@ export const BASE_OCTAVE_MIDI = 36;
 export const OCTAVE_DOWN_KEY = 'z';
 export const OCTAVE_UP_KEY = 'x';
 
-/** White A→K = C…C'; black W E T Y U with piano gaps (no R / no between E–F, B–C). */
+/** White A→K = root…+octave; black W E T Y U with piano gaps (no R / no between E–F, B–C). */
 export const BASS_KEYS: readonly BassKeyDef[] = [
   { key: 'a', label: 'A', semi: 0, kind: 'white', slot: 0 },
   { key: 'w', label: 'W', semi: 1, kind: 'black', slot: 1 },
@@ -45,24 +47,32 @@ const SEMI_BY_KEY = new Map(
   BASS_KEYS.map((def) => [def.key, def.semi] as const),
 );
 
+const KEY_NAME_BY_PC = new Map(KEY_OPTIONS.map((k) => [k.pc, k.label] as const));
+
 export function clampOctave(octave: number): number {
   return Math.min(OCTAVE_MAX, Math.max(OCTAVE_MIN, Math.round(octave)));
+}
+
+export function clampKeyPc(pc: number): number {
+  return ((Math.round(pc) % 12) + 12) % 12;
 }
 
 export function midiForBassKey(
   key: string,
   octave = 0,
+  keyPc = 0,
 ): number | undefined {
   const semi = SEMI_BY_KEY.get(key.toLowerCase());
   if (semi === undefined) {
     return undefined;
   }
-  return BASE_OCTAVE_MIDI + clampOctave(octave) * 12 + semi;
+  return BASE_OCTAVE_MIDI + clampKeyPc(keyPc) + clampOctave(octave) * 12 + semi;
 }
 
-/** MIDI C name for octave 0 = C2, e.g. octave −1 → C1. */
-export function octaveRootLabel(octave: number): string {
-  return `C${String(2 + clampOctave(octave))}`;
+/** Root name at the current octave for the selected key PC (e.g. A @ 0 → A2). */
+export function octaveRootLabel(octave: number, keyPc = 0): string {
+  const name = KEY_NAME_BY_PC.get(clampKeyPc(keyPc)) ?? 'C';
+  return `${name}${String(2 + clampOctave(octave))}`;
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {
@@ -81,6 +91,7 @@ export type KeyStripApi = {
   setPressed: (key: string, pressed: boolean) => void;
   clearPressed: () => void;
   setOctave: (octave: number) => void;
+  setKeyPc: (keyPc: number) => void;
 };
 
 export type KeyStripHandlers = {
@@ -103,9 +114,12 @@ export function createKeyStrip(handlers: KeyStripHandlers): KeyStripApi {
   const octaveRow = document.createElement('div');
   octaveRow.className = 'octave-row';
 
+  let bassOctave = 0;
+  let bassKeyPc = 0;
+
   const octaveLabel = document.createElement('span');
   octaveLabel.className = 'octave-label';
-  octaveLabel.textContent = octaveRootLabel(0);
+  octaveLabel.textContent = octaveRootLabel(bassOctave, bassKeyPc);
 
   const downBtn = document.createElement('button');
   downBtn.type = 'button';
@@ -165,7 +179,12 @@ export function createKeyStrip(handlers: KeyStripHandlers): KeyStripApi {
     downBtn.disabled = octave <= OCTAVE_MIN;
     upBtn.disabled = octave >= OCTAVE_MAX;
   };
-  syncOctaveButtons(0);
+
+  const syncLabel = (): void => {
+    octaveLabel.textContent = octaveRootLabel(bassOctave, bassKeyPc);
+    syncOctaveButtons(bassOctave);
+  };
+  syncLabel();
 
   return {
     root,
@@ -181,9 +200,12 @@ export function createKeyStrip(handlers: KeyStripHandlers): KeyStripApi {
       }
     },
     setOctave: (octave) => {
-      const o = clampOctave(octave);
-      octaveLabel.textContent = octaveRootLabel(o);
-      syncOctaveButtons(o);
+      bassOctave = clampOctave(octave);
+      syncLabel();
+    },
+    setKeyPc: (keyPc) => {
+      bassKeyPc = clampKeyPc(keyPc);
+      syncLabel();
     },
   };
 }

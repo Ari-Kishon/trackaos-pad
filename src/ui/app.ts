@@ -13,11 +13,26 @@ import {
   DEFAULT_KEY_PC,
   DEFAULT_SCALE_ID,
   KEY_OPTIONS,
+  OCTAVE_OFFSET_DEFAULT,
+  OCTAVE_OFFSET_MAX,
+  OCTAVE_OFFSET_MIN,
+  SCALE_OCTAVES,
+  SCALE_OCTAVES_MAX,
+  SCALE_OCTAVES_MIN,
   SCALES,
+  clampOctaveOffset,
+  clampScaleOctaves,
   rootMidiFromKeyPc,
   type ScaleId,
 } from '../audio/scale';
-import { createKeyStrip, isTypingTarget, midiForBassKey, clampOctave, OCTAVE_DOWN_KEY, OCTAVE_UP_KEY } from './keyboard';
+import {
+  createKeyStrip,
+  isTypingTarget,
+  midiForBassKey,
+  clampOctave,
+  OCTAVE_DOWN_KEY,
+  OCTAVE_UP_KEY,
+} from './keyboard';
 import { createPad } from './pad';
 
 export function mountApp(root: HTMLElement): void {
@@ -39,7 +54,7 @@ export function mountApp(root: HTMLElement): void {
 
   header.append(brand, status);
 
-  const controls = el('div', 'controls');
+  const songBar = el('div', 'song-bar');
 
   const drumField = fieldSelect(
     'DRUM',
@@ -53,18 +68,19 @@ export function mountApp(root: HTMLElement): void {
     BASS_PRESETS.map((p) => ({ value: p.id, label: p.label })),
     engine.bassPresetId,
   );
-  const synthField = fieldSelect(
-    'SYNTH',
-    'synth-voice',
-    SYNTH_VOICES.map((v) => ({ value: v.id, label: v.label })),
-    engine.pad.synthVoiceId,
-  );
-  const modeField = fieldSelect(
-    'PAD',
-    'pad-mode',
-    PAD_MODES.map((p) => ({ value: p.id, label: p.label })),
-    engine.pad.padMode,
-  );
+  const bpmField = fieldBpm(engine.currentBpm);
+
+  const transport = el('button', 'transport') as HTMLButtonElement;
+  transport.type = 'button';
+  transport.textContent = 'START';
+  transport.setAttribute('aria-pressed', 'false');
+
+  songBar.append(drumField.root, bassField.root, bpmField.root, transport);
+
+  const mainRow = el('div', 'main-row');
+
+  const padRail = el('aside', 'pad-rail');
+
   const keyField = fieldSelect(
     'KEY',
     'pad-key',
@@ -77,24 +93,21 @@ export function mountApp(root: HTMLElement): void {
     SCALES.map((s) => ({ value: s.id, label: s.label })),
     DEFAULT_SCALE_ID,
   );
-
-  const bpmField = fieldBpm(engine.currentBpm);
-
-  const transport = el('button', 'transport') as HTMLButtonElement;
-  transport.type = 'button';
-  transport.textContent = 'START';
-  transport.setAttribute('aria-pressed', 'false');
-
-  controls.append(
-    drumField.root,
-    bassField.root,
-    synthField.root,
-    modeField.root,
-    keyField.root,
-    scaleField.root,
-    bpmField.root,
-    transport,
+  const synthField = fieldSelect(
+    'SYNTH',
+    'synth-voice',
+    SYNTH_VOICES.map((v) => ({ value: v.id, label: v.label })),
+    engine.pad.synthVoiceId,
   );
+  const modeField = fieldSelect(
+    'PAD',
+    'pad-mode',
+    PAD_MODES.map((p) => ({ value: p.id, label: p.label })),
+    engine.pad.padMode,
+  );
+
+  let octRange = SCALE_OCTAVES;
+  let octOffset = OCTAVE_OFFSET_DEFAULT;
 
   const stage = el('section', 'pad-stage');
   const padFrame = el('div', 'pad-frame');
@@ -127,10 +140,100 @@ export function mountApp(root: HTMLElement): void {
   syncPadMeta(engine.pad.padMode);
 
   padFrame.append(padSurface, padMeta);
-
   stage.append(padFrame);
 
-  root.append(header, controls, stage);
+  /** Most-recently-pressed held keys (last = sounding). */
+  const heldKeys: string[] = [];
+  let bassOctave = 0;
+  let bassKeyPc = DEFAULT_KEY_PC;
+
+  const voiceFromHeld = (): void => {
+    const top = heldKeys[heldKeys.length - 1];
+    if (!top) {
+      engine.keyboardNoteOff();
+      return;
+    }
+    const midi = midiForBassKey(top, bassOctave, bassKeyPc);
+    if (midi === undefined) {
+      return;
+    }
+    engine.keyboardNoteMove(midi);
+  };
+
+  const applyOctave = (next: number): void => {
+    const clamped = clampOctave(next);
+    if (clamped === bassOctave) {
+      return;
+    }
+    bassOctave = clamped;
+    keyStrip.setOctave(bassOctave);
+    voiceFromHeld();
+  };
+
+  const keyStrip = createKeyStrip({
+    onOctaveDown: () => {
+      applyOctave(bassOctave - 1);
+    },
+    onOctaveUp: () => {
+      applyOctave(bassOctave + 1);
+    },
+  });
+  keyStrip.setKeyPc(bassKeyPc);
+  stage.append(keyStrip.root);
+
+  const applyKeyScale = (): void => {
+    const pc = Number(keyField.select.value);
+    const scaleId = scaleField.select.value as ScaleId;
+    const root = rootMidiFromKeyPc(pc) + octOffset * 12;
+    engine.pad.setKeyScale(root, scaleId, octRange);
+
+    if (pc !== bassKeyPc) {
+      bassKeyPc = pc;
+      keyStrip.setKeyPc(bassKeyPc);
+      voiceFromHeld();
+    }
+  };
+
+  const octRangeField = fieldStepper(
+    'OCT RANGE',
+    'pad-oct-range',
+    octRange,
+    SCALE_OCTAVES_MIN,
+    SCALE_OCTAVES_MAX,
+    (next) => {
+      unlockAudio();
+      octRange = clampScaleOctaves(next);
+      octRangeField.setValue(octRange);
+      applyKeyScale();
+    },
+  );
+
+  const octOffsetField = fieldStepper(
+    'OCT OFFSET',
+    'pad-oct-offset',
+    octOffset,
+    OCTAVE_OFFSET_MIN,
+    OCTAVE_OFFSET_MAX,
+    (next) => {
+      unlockAudio();
+      octOffset = clampOctaveOffset(next);
+      octOffsetField.setValue(octOffset);
+      applyKeyScale();
+    },
+    (value) => (value > 0 ? `+${String(value)}` : String(value)),
+  );
+
+  padRail.append(
+    keyField.root,
+    scaleField.root,
+    synthField.root,
+    modeField.root,
+    octRangeField.root,
+    octOffsetField.root,
+  );
+
+  mainRow.append(padRail, stage);
+  root.append(header, songBar, mainRow);
 
   const setStatus = (playing: boolean, padLive: boolean): void => {
     const transportLabel = playing ? 'TRANSPORT ON' : 'STANDBY';
@@ -153,12 +256,6 @@ export function mountApp(root: HTMLElement): void {
     bpmField.slider.value = String(bpm);
     bpmField.number.value = String(bpm);
     setStatus(engine.isPlaying, engine.pad.isActive);
-  };
-
-  const applyKeyScale = (): void => {
-    const pc = Number(keyField.select.value);
-    const scaleId = scaleField.select.value as ScaleId;
-    engine.pad.setKeyScale(rootMidiFromKeyPc(pc), scaleId);
   };
 
   // Unlock AudioContext on first user gesture anywhere in the shell.
@@ -230,43 +327,6 @@ export function mountApp(root: HTMLElement): void {
     },
   });
 
-  /** Most-recently-pressed held keys (last = sounding). */
-  const heldKeys: string[] = [];
-  let bassOctave = 0;
-
-  const voiceFromHeld = (): void => {
-    const top = heldKeys[heldKeys.length - 1];
-    if (!top) {
-      engine.keyboardNoteOff();
-      return;
-    }
-    const midi = midiForBassKey(top, bassOctave);
-    if (midi === undefined) {
-      return;
-    }
-    engine.keyboardNoteMove(midi);
-  };
-
-  const applyOctave = (next: number): void => {
-    const clamped = clampOctave(next);
-    if (clamped === bassOctave) {
-      return;
-    }
-    bassOctave = clamped;
-    keyStrip.setOctave(bassOctave);
-    voiceFromHeld();
-  };
-
-  const keyStrip = createKeyStrip({
-    onOctaveDown: () => {
-      applyOctave(bassOctave - 1);
-    },
-    onOctaveUp: () => {
-      applyOctave(bassOctave + 1);
-    },
-  });
-  stage.append(keyStrip.root);
-
   window.addEventListener('keydown', (event) => {
     if (event.repeat || isTypingTarget(event.target)) {
       return;
@@ -284,7 +344,7 @@ export function mountApp(root: HTMLElement): void {
       return;
     }
 
-    const midi = midiForBassKey(key, bassOctave);
+    const midi = midiForBassKey(key, bassOctave, bassKeyPc);
     if (midi === undefined) {
       return;
     }
@@ -306,7 +366,7 @@ export function mountApp(root: HTMLElement): void {
     if (key === OCTAVE_DOWN_KEY || key === OCTAVE_UP_KEY) {
       return;
     }
-    const midi = midiForBassKey(key, bassOctave);
+    const midi = midiForBassKey(key, bassOctave, bassKeyPc);
     if (midi === undefined) {
       return;
     }
@@ -369,6 +429,72 @@ function fieldSelect(
 
   root.append(caption, select);
   return { root, select };
+}
+
+function fieldStepper(
+  labelText: string,
+  id: string,
+  initial: number,
+  min: number,
+  max: number,
+  onChange: (next: number) => void,
+  format: (value: number) => string = String,
+): { root: HTMLElement; setValue: (value: number) => void } {
+  const root = el('div', 'field field-stepper');
+  root.id = id;
+
+  const caption = el('span', 'field-label');
+  caption.textContent = labelText;
+
+  const row = el('div', 'octave-row stepper-row');
+
+  const valueLabel = el('span', 'octave-label stepper-value');
+  valueLabel.textContent = format(initial);
+
+  const downBtn = document.createElement('button');
+  downBtn.type = 'button';
+  downBtn.className = 'octave-btn';
+  downBtn.textContent = '−';
+  downBtn.setAttribute('aria-label', `${labelText} down`);
+
+  const upBtn = document.createElement('button');
+  upBtn.type = 'button';
+  upBtn.className = 'octave-btn';
+  upBtn.textContent = '+';
+  upBtn.setAttribute('aria-label', `${labelText} up`);
+
+  let current = initial;
+
+  const sync = (): void => {
+    valueLabel.textContent = format(current);
+    downBtn.disabled = current <= min;
+    upBtn.disabled = current >= max;
+  };
+  sync();
+
+  downBtn.addEventListener('click', () => {
+    if (current <= min) {
+      return;
+    }
+    onChange(current - 1);
+  });
+  upBtn.addEventListener('click', () => {
+    if (current >= max) {
+      return;
+    }
+    onChange(current + 1);
+  });
+
+  row.append(valueLabel, downBtn, upBtn);
+  root.append(caption, row);
+
+  return {
+    root,
+    setValue: (value) => {
+      current = value;
+      sync();
+    },
+  };
 }
 
 function fieldBpm(initial: number): {
