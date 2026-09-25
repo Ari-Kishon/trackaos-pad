@@ -1,4 +1,4 @@
-import { DEFAULT_BPM, secondsPerStep } from './presets';
+import { DEFAULT_BPM, midiToHz, secondsPerStep } from './presets';
 
 /** Continuous techno-friendly pitch range across pad X (≈ A1–A4). */
 const FREQ_MIN = 55;
@@ -13,12 +13,23 @@ const GATE_RATE_STEPS = [0.5, 1, 2, 4] as const;
 /** Fixed arp subdivision (one hit per sixteenth). */
 const ARP_STEPS_PER_HIT = 1;
 
-export type PadMode = 'hold' | 'arp' | 'gate';
+/**
+ * iMS-20 performance Kaoss: Aeolian over ~3 octaves from A2.
+ * Official pad maps X→NOTE (scale), Y→GATE (25%…LEGATO).
+ */
+const IMS_ROOT_MIDI = 45;
+const IMS_SCALE_SEMIS = [0, 2, 3, 5, 7, 8, 10] as const;
+const IMS_OCTAVES = 3;
+/** Top→bottom: LEGATO, 100%, 75%, 50%, 25% of a sixteenth. */
+const IMS_GATE_FRACS = [Number.POSITIVE_INFINITY, 1, 0.75, 0.5, 0.25] as const;
+
+export type PadMode = 'hold' | 'arp' | 'gate' | 'ims';
 
 export const PAD_MODES: readonly { id: PadMode; label: string }[] = [
   { id: 'hold', label: 'HOLD' },
   { id: 'arp', label: 'ARP' },
   { id: 'gate', label: 'GATE' },
+  { id: 'ims', label: 'IMS' },
 ];
 
 export class PadSynth {
@@ -35,6 +46,10 @@ export class PadSynth {
   private arpIndex = 0;
   /** Ignore transport ticks before this time (avoids double-hit with engage seed). */
   private suppressUntil = 0;
+  /** Last IMS scale degree index (−1 = none). */
+  private imsDegree = -1;
+  /** Audio time when the next IMS one-shot may re-fire while held. */
+  private imsRetriggerAt = 0;
 
   constructor(ctx: AudioContext, destination: AudioNode) {
     this.ctx = ctx;
@@ -77,6 +92,8 @@ export class PadSynth {
     }
     this.mode = mode;
     this.arpIndex = 0;
+    this.imsDegree = -1;
+    this.imsRetriggerAt = 0;
     if (wasActive) {
       this.beginVoice(this.xNorm, this.yNorm);
     }
@@ -86,11 +103,13 @@ export class PadSynth {
    * HOLD: X pitch, Y filter.
    * ARP: X root, Y octave span.
    * GATE: X pitch, Y rate.
+   * IMS: X scale note, Y gate (iMS-20 performance Kaoss).
    */
   noteOn(xNorm: number, yNorm: number): void {
     this.xNorm = clamp01(xNorm);
     this.yNorm = clamp01(yNorm);
     this.arpIndex = 0;
+    this.imsDegree = -1;
     this.beginVoice(this.xNorm, this.yNorm);
   }
 
@@ -102,6 +121,10 @@ export class PadSynth {
     this.yNorm = clamp01(yNorm);
     if (this.mode === 'hold') {
       this.setHoldParams(this.xNorm, this.yNorm, this.ctx.currentTime, false);
+      return;
+    }
+    if (this.mode === 'ims') {
+      this.handleImsMove(this.ctx.currentTime);
     }
   }
 
@@ -110,10 +133,12 @@ export class PadSynth {
       return;
     }
     this.active = false;
+    this.imsDegree = -1;
+    this.imsRetriggerAt = 0;
     this.silenceHold(this.ctx.currentTime);
   }
 
-  /** Transport sixteenth-note tick — drives ARP and GATE while held. */
+  /** Transport sixteenth-note tick — drives ARP, GATE, and IMS while held. */
   onTransportStep(step: number, time: number, stepDur: number): void {
     if (!this.active || this.mode === 'hold') {
       return;
@@ -127,6 +152,13 @@ export class PadSynth {
         return;
       }
       this.fireArpNote(time, stepDur * 0.7);
+      return;
+    }
+
+    if (this.mode === 'ims') {
+      if (time + 1e-4 >= this.imsRetriggerAt) {
+        this.fireImsVoice(time, false);
+      }
       return;
     }
 
@@ -149,23 +181,86 @@ export class PadSynth {
 
     if (this.mode === 'hold') {
       this.ensureHoldOsc();
+      this.filter.Q.setValueAtTime(3.2, now);
       this.setHoldParams(xNorm, yNorm, now, true);
       this.openHoldAmp(now, 0.85, 0.012);
       return;
     }
 
-    // Rhythmic modes use one-shots; park the hold voice.
+    // Rhythmic / IMS modes use one-shots (or IMS legato); park the hold voice.
     this.silenceHold(now);
     const stepDur = secondsPerStep(this.bpm);
+
+    if (this.mode === 'ims') {
+      // IMS schedules its own re-triggers via imsRetriggerAt — no engage suppress.
+      this.suppressUntil = 0;
+      this.fireImsVoice(now, true);
+      return;
+    }
+
     this.suppressUntil = now + stepDur * 0.55;
 
     if (this.mode === 'arp') {
       this.fireArpNote(now, stepDur * 0.7);
-    } else {
-      const rate = gateRateFromY(yNorm);
-      const noteDur = stepDur * Math.min(rate >= 1 ? rate : 0.5, 2) * 0.45;
-      this.fireGateNote(now, noteDur);
+      return;
     }
+
+    const rate = gateRateFromY(yNorm);
+    const noteDur = stepDur * Math.min(rate >= 1 ? rate : 0.5, 2) * 0.45;
+    this.fireGateNote(now, noteDur);
+  }
+
+  private handleImsMove(time: number): void {
+    const degree = imsDegreeFromX(this.xNorm);
+    const legato = imsGateIsLegato(this.yNorm);
+
+    if (legato) {
+      if (degree !== this.imsDegree) {
+        this.fireImsVoice(time, true);
+      }
+      return;
+    }
+
+    // Leaving legato: cut sustain and seed a gated note.
+    if (this.imsRetriggerAt === Number.POSITIVE_INFINITY) {
+      this.silenceHold(time);
+      this.fireImsVoice(time, true);
+      return;
+    }
+
+    if (degree !== this.imsDegree) {
+      this.fireImsVoice(time, true);
+    }
+  }
+
+  private fireImsVoice(time: number, force: boolean): void {
+    const degree = imsDegreeFromX(this.xNorm);
+    const frac = imsGateFracFromY(this.yNorm);
+    const stepDur = secondsPerStep(this.bpm);
+    const freq = imsFreqFromDegree(degree);
+
+    this.imsDegree = degree;
+
+    if (!Number.isFinite(frac)) {
+      // LEGATO — dual-osc MS-20-ish sustain while held.
+      this.ensureHoldOsc();
+      if (this.osc) {
+        this.osc.type = 'sawtooth';
+        this.osc.frequency.setValueAtTime(freq, time);
+      }
+      // Bright resonant LP; fixed HP bite via one-shot path only — keep hold simple.
+      this.filter.Q.setValueAtTime(8.5, time);
+      this.filter.frequency.setValueAtTime(Math.min(freq * 8, 4200), time);
+      this.openHoldAmp(time, 0.78, force ? 0.008 : 0.004);
+      this.imsRetriggerAt = Number.POSITIVE_INFINITY;
+      return;
+    }
+
+    // Gated one-shots: duration + re-fire interval from Y (iMS-20 gate %).
+    this.silenceHold(time);
+    const duration = Math.max(stepDur * frac * 0.92, 0.025);
+    this.playImsOneShot(freq, time, duration);
+    this.imsRetriggerAt = time + Math.max(duration, stepDur * frac);
   }
 
   private fireArpNote(time: number, duration: number): void {
@@ -214,6 +309,58 @@ export class PadSynth {
 
     osc.start(time);
     osc.stop(releaseAt + 0.03);
+  }
+
+  /** Dual VCO + HPF→LPF cascade — aggressive MS-20 flavour for IMS. */
+  private playImsOneShot(freq: number, time: number, duration: number): void {
+    const f = Math.max(freq, 20);
+    const merge = this.ctx.createGain();
+    merge.gain.value = 0.55;
+
+    const saw = this.ctx.createOscillator();
+    saw.type = 'sawtooth';
+    saw.frequency.setValueAtTime(f, time);
+
+    const square = this.ctx.createOscillator();
+    square.type = 'square';
+    square.frequency.setValueAtTime(f * 1.003, time);
+    const squareGain = this.ctx.createGain();
+    squareGain.gain.value = 0.7;
+
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.Q.value = 3.4;
+    hp.frequency.setValueAtTime(Math.min(f * 0.85, 900), time);
+
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 9.5;
+    lp.frequency.setValueAtTime(Math.min(f * 7.5, 4800), time);
+    lp.frequency.exponentialRampToValueAtTime(
+      Math.max(f * 1.8, 180),
+      time + Math.max(duration * 0.7, 0.04),
+    );
+
+    const gain = this.ctx.createGain();
+    const peak = 0.7;
+    const attack = 0.003;
+    const releaseAt = time + Math.max(duration, attack + 0.02);
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.exponentialRampToValueAtTime(peak, time + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, releaseAt);
+
+    saw.connect(merge);
+    square.connect(squareGain);
+    squareGain.connect(merge);
+    merge.connect(hp);
+    hp.connect(lp);
+    lp.connect(gain);
+    gain.connect(this.output);
+
+    saw.start(time);
+    square.start(time);
+    saw.stop(releaseAt + 0.03);
+    square.stop(releaseAt + 0.03);
   }
 
   private openHoldAmp(time: number, peak: number, attack: number): void {
@@ -268,6 +415,14 @@ function freqFromX(xNorm: number): number {
   return FREQ_MIN * (FREQ_MAX / FREQ_MIN) ** x;
 }
 
+/** Inverse of freqFromX — clamp to pad pitch range. */
+export function xNormFromFreq(hz: number): number {
+  const lo = Math.log(FREQ_MIN);
+  const hi = Math.log(FREQ_MAX);
+  const f = Math.log(Math.min(FREQ_MAX, Math.max(FREQ_MIN, hz)));
+  return clamp01((f - lo) / (hi - lo));
+}
+
 /** Top of pad = 3 octaves, bottom = 1. */
 function octaveSpanFromY(yNorm: number): number {
   const y = clamp01(yNorm);
@@ -294,6 +449,36 @@ function gateRateFromY(yNorm: number): number {
     Math.floor(y * GATE_RATE_STEPS.length),
   );
   return GATE_RATE_STEPS[idx] ?? 1;
+}
+
+function imsDegreeCount(): number {
+  return IMS_SCALE_SEMIS.length * IMS_OCTAVES;
+}
+
+function imsDegreeFromX(xNorm: number): number {
+  const n = imsDegreeCount();
+  const idx = Math.floor(clamp01(xNorm) * n);
+  return Math.min(n - 1, Math.max(0, idx));
+}
+
+function imsFreqFromDegree(degree: number): number {
+  const perOct = IMS_SCALE_SEMIS.length;
+  const oct = Math.floor(degree / perOct);
+  const semi = IMS_SCALE_SEMIS[degree % perOct] ?? 0;
+  return midiToHz(IMS_ROOT_MIDI + oct * 12 + semi);
+}
+
+function imsGateFracFromY(yNorm: number): number {
+  const y = clamp01(yNorm);
+  const idx = Math.min(
+    IMS_GATE_FRACS.length - 1,
+    Math.floor(y * IMS_GATE_FRACS.length),
+  );
+  return IMS_GATE_FRACS[idx] ?? 0.5;
+}
+
+function imsGateIsLegato(yNorm: number): boolean {
+  return !Number.isFinite(imsGateFracFromY(yNorm));
 }
 
 function clamp01(v: number): number {

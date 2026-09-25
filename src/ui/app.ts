@@ -78,6 +78,9 @@ export function mountApp(root: HTMLElement): void {
     } else if (mode === 'arp') {
       padMetaX.textContent = 'X · ROOT';
       padMetaY.textContent = 'Y · OCTAVE';
+    } else if (mode === 'ims') {
+      padMetaX.textContent = 'X · NOTE';
+      padMetaY.textContent = 'Y · GATE';
     } else {
       padMetaX.textContent = 'X · PITCH';
       padMetaY.textContent = 'Y · RATE';
