@@ -35,6 +35,9 @@ export const PAD_MODES: readonly { id: PadMode; label: string }[] = [
   { id: 'ims', label: 'IMS' },
 ];
 
+/** Default pad bus level — sits under kick/bass in the mix. */
+export const DEFAULT_SYNTH_VOLUME = 0.55;
+
 export class PadSynth {
   private readonly ctx: AudioContext;
   private readonly output: GainNode;
@@ -65,7 +68,7 @@ export class PadSynth {
     this.ctx = ctx;
     this.output = ctx.createGain();
     // Sit under kick/bass so the pad layers without masking the groove.
-    this.output.gain.value = 0.55;
+    this.output.gain.value = DEFAULT_SYNTH_VOLUME;
     this.output.connect(destination);
 
     this.filter = ctx.createBiquadFilter();
@@ -90,6 +93,15 @@ export class PadSynth {
 
   get synthVoiceId(): SynthVoiceId {
     return this.voice;
+  }
+
+  get volume(): number {
+    return this.output.gain.value;
+  }
+
+  /** Bus level for the pad voice (0–1). */
+  setVolume(value: number): void {
+    this.output.gain.value = clamp01(value);
   }
 
   get keyRootMidi(): number {

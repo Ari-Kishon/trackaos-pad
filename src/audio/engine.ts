@@ -17,6 +17,19 @@ import { PadSynth } from './pad-synth';
 const LOOKAHEAD_S = 0.12;
 const SCHEDULER_MS = 25;
 
+/** Default lane bus levels (absolute gain into master). */
+export const DEFAULT_DRUM_VOLUME = 0.72;
+export const DEFAULT_BASS_VOLUME = 0.5;
+/** Keyboard bass relative to sequenced bass bus. */
+const KEYBOARD_TO_BASS = 0.34 / DEFAULT_BASS_VOLUME;
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, value));
+}
+
 function createNoiseBuffer(ctx: AudioContext): AudioBuffer {
   const length = ctx.sampleRate;
   const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
@@ -57,15 +70,15 @@ export class AudioEngine {
     this.master.connect(this.ctx.destination);
 
     this.drumBus = this.ctx.createGain();
-    this.drumBus.gain.value = 0.72;
+    this.drumBus.gain.value = DEFAULT_DRUM_VOLUME;
     this.drumBus.connect(this.master);
 
     this.bassBus = this.ctx.createGain();
-    this.bassBus.gain.value = 0.5;
+    this.bassBus.gain.value = DEFAULT_BASS_VOLUME;
     this.bassBus.connect(this.master);
 
     this.keyboardBus = this.ctx.createGain();
-    this.keyboardBus.gain.value = 0.34;
+    this.keyboardBus.gain.value = DEFAULT_BASS_VOLUME * KEYBOARD_TO_BASS;
     this.keyboardBus.connect(this.master);
 
     this.keyboardFilter = this.ctx.createBiquadFilter();
@@ -113,6 +126,32 @@ export class AudioEngine {
 
   get songKeyPc(): number {
     return this.keyPc;
+  }
+
+  get drumVolume(): number {
+    return this.drumBus.gain.value;
+  }
+
+  get bassVolume(): number {
+    return this.bassBus.gain.value;
+  }
+
+  get synthVolume(): number {
+    return this.pad.volume;
+  }
+
+  setDrumVolume(value: number): void {
+    this.drumBus.gain.value = clamp01(value);
+  }
+
+  setBassVolume(value: number): void {
+    const level = clamp01(value);
+    this.bassBus.gain.value = level;
+    this.keyboardBus.gain.value = level * KEYBOARD_TO_BASS;
+  }
+
+  setSynthVolume(value: number): void {
+    this.pad.setVolume(value);
   }
 
   async resume(): Promise<void> {

@@ -89,6 +89,12 @@ export function mountApp(root: HTMLElement): void {
     transport,
   );
 
+  const mixBar = el('div', 'mix-bar');
+  const drumVol = fieldVolume('DRUM LVL', 'drum-volume', engine.drumVolume);
+  const bassVol = fieldVolume('BASS LVL', 'bass-volume', engine.bassVolume);
+  const synthVol = fieldVolume('SYNTH LVL', 'synth-volume', engine.synthVolume);
+  mixBar.append(drumVol.root, bassVol.root, synthVol.root);
+
   const mainRow = el('div', 'main-row');
 
   const padRail = el('aside', 'pad-rail');
@@ -239,7 +245,7 @@ export function mountApp(root: HTMLElement): void {
   );
 
   mainRow.append(padRail, stage);
-  root.append(header, songBar, mainRow);
+  root.append(header, songBar, mixBar, mainRow);
 
   const setStatus = (playing: boolean, padLive: boolean): void => {
     const transportLabel = playing ? 'TRANSPORT ON' : 'STANDBY';
@@ -306,6 +312,34 @@ export function mountApp(root: HTMLElement): void {
 
   bpmField.number.addEventListener('change', () => {
     applyBpm(Number(bpmField.number.value));
+  });
+
+  const bindVolume = (
+    field: ReturnType<typeof fieldVolume>,
+    apply: (level: number) => void,
+  ): void => {
+    const sync = (raw: number): void => {
+      unlockAudio();
+      const level = Math.min(1, Math.max(0, raw / 100));
+      apply(level);
+      field.setValue(level);
+    };
+    field.slider.addEventListener('input', () => {
+      sync(Number(field.slider.value));
+    });
+    field.number.addEventListener('change', () => {
+      sync(Number(field.number.value));
+    });
+  };
+
+  bindVolume(drumVol, (level) => {
+    engine.setDrumVolume(level);
+  });
+  bindVolume(bassVol, (level) => {
+    engine.setBassVolume(level);
+  });
+  bindVolume(synthVol, (level) => {
+    engine.setSynthVolume(level);
   });
 
   transport.addEventListener('click', () => {
@@ -538,4 +572,59 @@ function fieldBpm(initial: number): {
   row.append(number, slider);
   root.append(caption, row);
   return { root, slider, number };
+}
+
+/** Volume fader — UI is 0–100%, gain is 0–1. */
+function fieldVolume(
+  labelText: string,
+  id: string,
+  initial: number,
+): {
+  root: HTMLElement;
+  slider: HTMLInputElement;
+  number: HTMLInputElement;
+  setValue: (level: number) => void;
+} {
+  const pct = Math.round(Math.min(1, Math.max(0, initial)) * 100);
+
+  const root = el('div', 'field field-volume');
+
+  const caption = el('span', 'field-label');
+  caption.textContent = labelText;
+
+  const row = el('div', 'volume-row');
+
+  const number = document.createElement('input');
+  number.type = 'number';
+  number.id = `${id}-value`;
+  number.className = 'volume-number';
+  number.min = '0';
+  number.max = '100';
+  number.step = '1';
+  number.value = String(pct);
+  number.setAttribute('aria-label', `${labelText} percent`);
+
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.id = `${id}-slider`;
+  slider.className = 'volume-slider';
+  slider.min = '0';
+  slider.max = '100';
+  slider.step = '1';
+  slider.value = String(pct);
+  slider.setAttribute('aria-label', `${labelText} slider`);
+
+  row.append(number, slider);
+  root.append(caption, row);
+
+  return {
+    root,
+    slider,
+    number,
+    setValue: (level) => {
+      const next = String(Math.round(Math.min(1, Math.max(0, level)) * 100));
+      slider.value = next;
+      number.value = next;
+    },
+  };
 }
