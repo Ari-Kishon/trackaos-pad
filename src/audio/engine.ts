@@ -11,6 +11,7 @@ import {
   type DrumHitKind,
   type DrumPreset,
 } from './presets';
+import { DEFAULT_KEY_PC } from './scale';
 import { PadSynth } from './pad-synth';
 
 const LOOKAHEAD_S = 0.12;
@@ -41,6 +42,8 @@ export class AudioEngine {
 
   private drumPreset: DrumPreset;
   private bassPreset: BassPreset;
+  /** Pitch-class transpose for sequenced bass (presets authored in C). */
+  private keyPc = DEFAULT_KEY_PC;
   private bpm = DEFAULT_BPM;
   private playing = false;
   private currentStep = 0;
@@ -108,6 +111,10 @@ export class AudioEngine {
     return this.bassPreset.id;
   }
 
+  get songKeyPc(): number {
+    return this.keyPc;
+  }
+
   async resume(): Promise<void> {
     if (this.ctx.state === 'suspended') {
       await this.ctx.resume();
@@ -138,6 +145,11 @@ export class AudioEngine {
     if (found) {
       this.bassPreset = found;
     }
+  }
+
+  /** Shared mix key — transposes the bassline; pad/keyboard follow via UI. */
+  setKeyPc(pc: number): void {
+    this.keyPc = ((pc % 12) + 12) % 12;
   }
 
   start(): void {
@@ -262,7 +274,7 @@ export class AudioEngine {
     for (const note of this.bassPreset.notes) {
       if (note.step === step) {
         this.playBass(
-          note.midi,
+          note.midi + this.keyPc,
           time,
           note.durationSteps * stepDur,
           note.velocity,

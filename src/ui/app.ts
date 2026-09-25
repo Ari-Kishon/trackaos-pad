@@ -56,6 +56,12 @@ export function mountApp(root: HTMLElement): void {
 
   const songBar = el('div', 'song-bar');
 
+  const keyField = fieldSelect(
+    'KEY',
+    'song-key',
+    KEY_OPTIONS.map((k) => ({ value: String(k.pc), label: k.label })),
+    String(engine.songKeyPc),
+  );
   const drumField = fieldSelect(
     'DRUM',
     'drum-preset',
@@ -75,18 +81,18 @@ export function mountApp(root: HTMLElement): void {
   transport.textContent = 'START';
   transport.setAttribute('aria-pressed', 'false');
 
-  songBar.append(drumField.root, bassField.root, bpmField.root, transport);
+  songBar.append(
+    keyField.root,
+    drumField.root,
+    bassField.root,
+    bpmField.root,
+    transport,
+  );
 
   const mainRow = el('div', 'main-row');
 
   const padRail = el('aside', 'pad-rail');
 
-  const keyField = fieldSelect(
-    'KEY',
-    'pad-key',
-    KEY_OPTIONS.map((k) => ({ value: String(k.pc), label: k.label })),
-    String(DEFAULT_KEY_PC),
-  );
   const scaleField = fieldSelect(
     'SCALE',
     'pad-scale',
@@ -185,6 +191,7 @@ export function mountApp(root: HTMLElement): void {
     const pc = Number(keyField.select.value);
     const scaleId = scaleField.select.value as ScaleId;
     const root = rootMidiFromKeyPc(pc) + octOffset * 12;
+    engine.setKeyPc(pc);
     engine.pad.setKeyScale(root, scaleId, octRange);
 
     if (pc !== bassKeyPc) {
@@ -224,7 +231,6 @@ export function mountApp(root: HTMLElement): void {
   );
 
   padRail.append(
-    keyField.root,
     scaleField.root,
     synthField.root,
     modeField.root,
