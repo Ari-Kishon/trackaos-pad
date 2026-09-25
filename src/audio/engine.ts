@@ -1,8 +1,9 @@
 import {
   BASS_PRESETS,
-  BPM,
+  DEFAULT_BPM,
   DRUM_PRESETS,
   STEPS_PER_BAR,
+  clampBpm,
   midiToHz,
   secondsPerStep,
   type BassPreset,
@@ -35,6 +36,7 @@ export class AudioEngine {
 
   private drumPreset: DrumPreset;
   private bassPreset: BassPreset;
+  private bpm = DEFAULT_BPM;
   private playing = false;
   private currentStep = 0;
   private nextNoteTime = 0;
@@ -47,11 +49,11 @@ export class AudioEngine {
     this.master.connect(this.ctx.destination);
 
     this.drumBus = this.ctx.createGain();
-    this.drumBus.gain.value = 0.7;
+    this.drumBus.gain.value = 0.72;
     this.drumBus.connect(this.master);
 
     this.bassBus = this.ctx.createGain();
-    this.bassBus.gain.value = 0.55;
+    this.bassBus.gain.value = 0.5;
     this.bassBus.connect(this.master);
 
     this.noiseBuffer = createNoiseBuffer(this.ctx);
@@ -74,6 +76,10 @@ export class AudioEngine {
     return this.playing;
   }
 
+  get currentBpm(): number {
+    return this.bpm;
+  }
+
   get drumPresetId(): string {
     return this.drumPreset.id;
   }
@@ -86,6 +92,17 @@ export class AudioEngine {
     if (this.ctx.state === 'suspended') {
       await this.ctx.resume();
     }
+  }
+
+  /** Fire-and-forget resume for first gesture (non-blocking hot path). */
+  unlock(): void {
+    if (this.ctx.state === 'suspended') {
+      void this.ctx.resume();
+    }
+  }
+
+  setBpm(value: number): void {
+    this.bpm = clampBpm(value);
   }
 
   setDrumPreset(id: string): void {
@@ -133,8 +150,8 @@ export class AudioEngine {
   }
 
   private schedule(): void {
-    const stepDur = secondsPerStep(BPM);
     while (this.nextNoteTime < this.ctx.currentTime + LOOKAHEAD_S) {
+      const stepDur = secondsPerStep(this.bpm);
       this.scheduleStep(this.currentStep, this.nextNoteTime, stepDur);
       this.nextNoteTime += stepDur;
       this.currentStep = (this.currentStep + 1) % STEPS_PER_BAR;
@@ -165,11 +182,14 @@ export class AudioEngine {
       case 'kick':
         this.playKick(time, velocity);
         break;
-      case 'snare':
-        this.playSnare(time, velocity);
+      case 'clap':
+        this.playClap(time, velocity);
         break;
       case 'hat':
-        this.playHat(time, velocity);
+        this.playHat(time, velocity, false);
+        break;
+      case 'openhat':
+        this.playHat(time, velocity, true);
         break;
       case 'rim':
         this.playRim(time, velocity);
@@ -177,87 +197,112 @@ export class AudioEngine {
     }
   }
 
+  /** Techno kick: click transient + deep sine pitch drop. */
   private playKick(time: number, velocity: number): void {
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(140, time);
-    osc.frequency.exponentialRampToValueAtTime(42, time + 0.08);
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(0.9 * velocity, time + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.28);
-    osc.connect(gain);
-    gain.connect(this.drumBus);
-    osc.start(time);
-    osc.stop(time + 0.3);
+    const body = this.ctx.createOscillator();
+    body.type = 'sine';
+    body.frequency.setValueAtTime(180, time);
+    body.frequency.exponentialRampToValueAtTime(48, time + 0.045);
+    body.frequency.exponentialRampToValueAtTime(38, time + 0.18);
+    const bodyGain = this.ctx.createGain();
+    bodyGain.gain.setValueAtTime(0.0001, time);
+    bodyGain.gain.exponentialRampToValueAtTime(1.05 * velocity, time + 0.002);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.32);
+    body.connect(bodyGain);
+    bodyGain.connect(this.drumBus);
+    body.start(time);
+    body.stop(time + 0.34);
+
+    const click = this.ctx.createOscillator();
+    click.type = 'square';
+    click.frequency.value = 2400;
+    const clickFilter = this.ctx.createBiquadFilter();
+    clickFilter.type = 'highpass';
+    clickFilter.frequency.value = 1200;
+    const clickGain = this.ctx.createGain();
+    clickGain.gain.setValueAtTime(0.0001, time);
+    clickGain.gain.exponentialRampToValueAtTime(0.35 * velocity, time + 0.0008);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.018);
+    click.connect(clickFilter);
+    clickFilter.connect(clickGain);
+    clickGain.connect(this.drumBus);
+    click.start(time);
+    click.stop(time + 0.025);
   }
 
-  private playSnare(time: number, velocity: number): void {
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = this.noiseBuffer;
-    const noiseFilter = this.ctx.createBiquadFilter();
-    noiseFilter.type = 'bandpass';
-    noiseFilter.frequency.value = 1800;
-    noiseFilter.Q.value = 0.7;
-    const noiseGain = this.ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.0001, time);
-    noiseGain.gain.exponentialRampToValueAtTime(0.55 * velocity, time + 0.003);
-    noiseGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.14);
+  /** Stacked noise clap on 2 and 4. */
+  private playClap(time: number, velocity: number): void {
+    const offsets = [0, 0.012, 0.024, 0.038];
+    for (const [i, offset] of offsets.entries()) {
+      const t = time + offset;
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = this.noiseBuffer;
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1400 + i * 220;
+      filter.Q.value = 1.1;
+      const gain = this.ctx.createGain();
+      const peak = (0.42 - i * 0.05) * velocity;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(peak, t + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.drumBus);
+      noise.start(t);
+      noise.stop(t + 0.11);
+    }
 
     const tone = this.ctx.createOscillator();
     tone.type = 'triangle';
-    tone.frequency.value = 190;
+    tone.frequency.value = 420;
     const toneGain = this.ctx.createGain();
     toneGain.gain.setValueAtTime(0.0001, time);
-    toneGain.gain.exponentialRampToValueAtTime(0.35 * velocity, time + 0.002);
-    toneGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.1);
-
-    noise.connect(noiseFilter);
-    noiseFilter.connect(noiseGain);
-    noiseGain.connect(this.drumBus);
+    toneGain.gain.exponentialRampToValueAtTime(0.12 * velocity, time + 0.002);
+    toneGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
     tone.connect(toneGain);
     toneGain.connect(this.drumBus);
-
-    noise.start(time);
-    noise.stop(time + 0.16);
     tone.start(time);
-    tone.stop(time + 0.12);
+    tone.stop(time + 0.06);
   }
 
-  private playHat(time: number, velocity: number): void {
+  private playHat(time: number, velocity: number, open: boolean): void {
     const noise = this.ctx.createBufferSource();
     noise.buffer = this.noiseBuffer;
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'highpass';
-    filter.frequency.value = 7000;
+    filter.frequency.value = open ? 6200 : 9000;
+    filter.Q.value = open ? 0.6 : 1.2;
     const gain = this.ctx.createGain();
+    const peak = (open ? 0.32 : 0.26) * velocity;
+    const release = open ? 0.18 : 0.028;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(0.28 * velocity, time + 0.002);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+    gain.gain.exponentialRampToValueAtTime(peak, time + 0.001);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + release);
     noise.connect(filter);
     filter.connect(gain);
     gain.connect(this.drumBus);
     noise.start(time);
-    noise.stop(time + 0.06);
+    noise.stop(time + release + 0.02);
   }
 
   private playRim(time: number, velocity: number): void {
     const osc = this.ctx.createOscillator();
     osc.type = 'square';
-    osc.frequency.value = 820;
+    osc.frequency.value = 980;
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'bandpass';
-    filter.frequency.value = 1200;
-    filter.Q.value = 4;
+    filter.frequency.value = 1600;
+    filter.Q.value = 5;
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(0.25 * velocity, time + 0.001);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.22 * velocity, time + 0.001);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.045);
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(this.drumBus);
     osc.start(time);
-    osc.stop(time + 0.07);
+    osc.stop(time + 0.05);
   }
 
   private playBass(
@@ -273,19 +318,23 @@ export class AudioEngine {
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.Q.value = voice === 1 ? 6 : 1.2;
-    const cutoff = voice === 0 ? 220 : voice === 1 ? 900 : 480;
-    filter.frequency.setValueAtTime(cutoff, time);
+    filter.Q.value = voice === 1 ? 9 : voice === 2 ? 2.4 : 0.9;
+    const startCut = voice === 0 ? 180 : voice === 1 ? 1600 : 520;
+    filter.frequency.setValueAtTime(startCut, time);
     if (voice === 1) {
-      filter.frequency.exponentialRampToValueAtTime(180, time + duration * 0.7);
+      filter.frequency.exponentialRampToValueAtTime(
+        Math.max(120, startCut * 0.12),
+        time + Math.max(duration * 0.65, 0.05),
+      );
     }
 
     const gain = this.ctx.createGain();
-    const peak = (voice === 0 ? 0.7 : 0.45) * velocity;
+    const peak = (voice === 0 ? 0.78 : voice === 1 ? 0.42 : 0.4) * velocity;
+    const attack = voice === 1 ? 0.004 : 0.01;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(peak, time + 0.01);
-    const releaseStart = Math.max(time + duration * 0.55, time + 0.04);
-    gain.gain.setValueAtTime(peak * 0.85, releaseStart);
+    gain.gain.exponentialRampToValueAtTime(peak, time + attack);
+    const releaseStart = Math.max(time + duration * 0.5, time + attack + 0.02);
+    gain.gain.setValueAtTime(peak * 0.8, releaseStart);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
 
     osc.connect(filter);
