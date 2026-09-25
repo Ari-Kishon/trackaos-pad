@@ -1,4 +1,5 @@
 import { AudioEngine } from '../audio/engine';
+import { PAD_MODES, type PadMode } from '../audio/pad-synth';
 import {
   BASS_PRESETS,
   BPM_MAX,
@@ -41,6 +42,12 @@ export function mountApp(root: HTMLElement): void {
     BASS_PRESETS.map((p) => ({ value: p.id, label: p.label })),
     engine.bassPresetId,
   );
+  const modeField = fieldSelect(
+    'PAD',
+    'pad-mode',
+    PAD_MODES.map((p) => ({ value: p.id, label: p.label })),
+    engine.pad.padMode,
+  );
 
   const bpmField = fieldBpm(engine.currentBpm);
 
@@ -49,7 +56,7 @@ export function mountApp(root: HTMLElement): void {
   transport.textContent = 'START';
   transport.setAttribute('aria-pressed', 'false');
 
-  controls.append(drumField.root, bassField.root, bpmField.root, transport);
+  controls.append(drumField.root, bassField.root, modeField.root, bpmField.root, transport);
 
   const stage = el('section', 'pad-stage');
   const padFrame = el('div', 'pad-frame');
@@ -59,8 +66,24 @@ export function mountApp(root: HTMLElement): void {
   padSurface.tabIndex = 0;
 
   const padMeta = el('div', 'pad-meta');
-  padMeta.innerHTML =
-    '<span>X · PITCH</span><span class="pad-meta-rule"></span><span>Y · FILTER</span>';
+  const padMetaX = el('span', 'pad-meta-axis');
+  const padMetaRule = el('span', 'pad-meta-rule');
+  const padMetaY = el('span', 'pad-meta-axis');
+  padMeta.append(padMetaX, padMetaRule, padMetaY);
+
+  const syncPadMeta = (mode: PadMode): void => {
+    if (mode === 'hold') {
+      padMetaX.textContent = 'X · PITCH';
+      padMetaY.textContent = 'Y · FILTER';
+    } else if (mode === 'arp') {
+      padMetaX.textContent = 'X · ROOT';
+      padMetaY.textContent = 'Y · RATE';
+    } else {
+      padMetaX.textContent = 'X · PITCH';
+      padMetaY.textContent = 'Y · RATE';
+    }
+  };
+  syncPadMeta(engine.pad.padMode);
 
   padFrame.append(padSurface, padMeta);
   stage.append(padFrame);
@@ -102,6 +125,13 @@ export function mountApp(root: HTMLElement): void {
   bassField.select.addEventListener('change', () => {
     unlockAudio();
     engine.setBassPreset(bassField.select.value);
+  });
+
+  modeField.select.addEventListener('change', () => {
+    unlockAudio();
+    const mode = modeField.select.value as PadMode;
+    engine.pad.setMode(mode);
+    syncPadMeta(mode);
   });
 
   bpmField.slider.addEventListener('input', () => {
