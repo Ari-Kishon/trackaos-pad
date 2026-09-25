@@ -8,6 +8,8 @@ import {
 import {
   DEFAULT_KEY_PC,
   DEFAULT_SCALE_ID,
+  SCALE_OCTAVES,
+  clampScaleOctaves,
   degreeFromXNorm,
   midiFromDegree,
   rootMidiFromKeyPc,
@@ -57,6 +59,7 @@ export class PadSynth {
   /** Key/Scale pitch world — pad X only picks a degree within this. */
   private rootMidi = rootMidiFromKeyPc(DEFAULT_KEY_PC);
   private scaleId: ScaleId = DEFAULT_SCALE_ID;
+  private scaleOctaves = SCALE_OCTAVES;
 
   constructor(ctx: AudioContext, destination: AudioNode) {
     this.ctx = ctx;
@@ -97,6 +100,10 @@ export class PadSynth {
     return this.scaleId;
   }
 
+  get keyScaleOctaves(): number {
+    return this.scaleOctaves;
+  }
+
   setBpm(bpm: number): void {
     this.bpm = bpm;
   }
@@ -122,11 +129,12 @@ export class PadSynth {
   }
 
   /**
-   * Own absolute pitch via Key/Scale. Live pad voice retargets if held.
+   * Own absolute pitch via Key/Scale/octave span. Live pad voice retargets if held.
    */
-  setKeyScale(rootMidi: number, scaleId: ScaleId): void {
+  setKeyScale(rootMidi: number, scaleId: ScaleId, scaleOctaves = this.scaleOctaves): void {
     this.rootMidi = rootMidi;
     this.scaleId = scaleId;
+    this.scaleOctaves = clampScaleOctaves(scaleOctaves);
     if (!this.active) {
       this.lastDegree = -1;
       return;
@@ -271,7 +279,7 @@ export class PadSynth {
   }
 
   private handleImsMove(time: number): void {
-    const degree = degreeFromXNorm(this.xNorm, this.scaleId);
+    const degree = degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves);
     const legato = imsGateIsLegato(this.yNorm);
 
     if (legato) {
@@ -294,7 +302,7 @@ export class PadSynth {
   }
 
   private fireImsVoice(time: number, force: boolean): void {
-    const degree = degreeFromXNorm(this.xNorm, this.scaleId);
+    const degree = degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves);
     const frac = imsGateFracFromY(this.yNorm);
     const stepDur = secondsPerStep(this.bpm);
     const freq = this.freqFromDegree(degree);
@@ -329,7 +337,7 @@ export class PadSynth {
   }
 
   private fireArpNote(time: number, duration: number): void {
-    const startDegree = degreeFromXNorm(this.xNorm, this.scaleId);
+    const startDegree = degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves);
     const octaves = octaveSpanFromY(this.yNorm);
     const chord = buildArpDegrees(this.rootMidi, this.scaleId, startDegree, octaves);
     const freq = chord[this.arpIndex % chord.length] ?? this.freqFromDegree(startDegree);
@@ -338,7 +346,9 @@ export class PadSynth {
   }
 
   private fireGateNote(time: number, duration: number): void {
-    const freq = this.freqFromDegree(degreeFromXNorm(this.xNorm, this.scaleId));
+    const freq = this.freqFromDegree(
+      degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves),
+    );
     this.playVoiceOneShot(freq, time, duration, false);
   }
 
@@ -585,7 +595,7 @@ export class PadSynth {
     if (!this.osc) {
       return;
     }
-    const degree = degreeFromXNorm(xNorm, this.scaleId);
+    const degree = degreeFromXNorm(xNorm, this.scaleId, this.scaleOctaves);
     const freq = this.freqFromDegree(degree);
     const y = clamp01(yNorm);
     const cutoff =

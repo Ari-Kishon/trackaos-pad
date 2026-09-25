@@ -34,8 +34,29 @@ export const SCALES: readonly ScaleDef[] = [
 
 export const DEFAULT_SCALE_ID: ScaleId = 'aeolian';
 
-/** Pad spans this many octaves of the scale. */
+/** Pad spans this many octaves of the scale (default). */
 export const SCALE_OCTAVES = 3;
+export const SCALE_OCTAVES_MIN = 1;
+export const SCALE_OCTAVES_MAX = 4;
+
+/** Whole-octave shift of the pad pitch world relative to Key. */
+export const OCTAVE_OFFSET_DEFAULT = 0;
+export const OCTAVE_OFFSET_MIN = -2;
+export const OCTAVE_OFFSET_MAX = 2;
+
+export function clampScaleOctaves(octaves: number): number {
+  return Math.min(
+    SCALE_OCTAVES_MAX,
+    Math.max(SCALE_OCTAVES_MIN, Math.round(octaves)),
+  );
+}
+
+export function clampOctaveOffset(offset: number): number {
+  return Math.min(
+    OCTAVE_OFFSET_MAX,
+    Math.max(OCTAVE_OFFSET_MIN, Math.round(offset)),
+  );
+}
 
 const SCALE_BY_ID = new Map(SCALES.map((s) => [s.id, s] as const));
 
@@ -73,12 +94,19 @@ export function rootMidiFromKeyPc(pc: number): number {
   return KEY_BASE_MIDI + p;
 }
 
-export function degreeCount(scaleId: ScaleId): number {
-  return scaleById(scaleId).semis.length * SCALE_OCTAVES;
+export function degreeCount(
+  scaleId: ScaleId,
+  octaves: number = SCALE_OCTAVES,
+): number {
+  return scaleById(scaleId).semis.length * clampScaleOctaves(octaves);
 }
 
-export function degreeFromXNorm(xNorm: number, scaleId: ScaleId): number {
-  const n = degreeCount(scaleId);
+export function degreeFromXNorm(
+  xNorm: number,
+  scaleId: ScaleId,
+  octaves: number = SCALE_OCTAVES,
+): number {
+  const n = degreeCount(scaleId, octaves);
   const idx = Math.floor(clamp01(xNorm) * n);
   return Math.min(n - 1, Math.max(0, idx));
 }
