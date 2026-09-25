@@ -20,20 +20,46 @@ import {
 /** Gate rate: steps between hits, top→bottom (fast → slow). */
 const GATE_RATE_STEPS = [0.5, 1, 2, 4] as const;
 
-/** Fixed arp subdivision (one hit per sixteenth). */
-const ARP_STEPS_PER_HIT = 1;
-
 /** Top→bottom: LEGATO, 100%, 75%, 50%, 25% of a sixteenth. */
 const IMS_GATE_FRACS = [Number.POSITIVE_INFINITY, 1, 0.75, 0.5, 0.25] as const;
 
 export type PadMode = 'hold' | 'arp' | 'gate' | 'ims';
 
-export const PAD_MODES: readonly { id: PadMode; label: string }[] = [
-  { id: 'hold', label: 'HOLD' },
-  { id: 'arp', label: 'ARP' },
-  { id: 'gate', label: 'GATE' },
-  { id: 'ims', label: 'IMS' },
+export const PAD_MODES: readonly { id: PadMode; label: string; shortcut: string }[] = [
+  { id: 'hold', label: 'HOLD', shortcut: '1' },
+  { id: 'arp', label: 'ARP', shortcut: '2' },
+  { id: 'gate', label: 'GATE', shortcut: '3' },
+  { id: 'ims', label: 'IMS', shortcut: '4' },
 ];
+
+/** Logic-style arpeggio direction. */
+export type ArpPattern = 'up' | 'down' | 'upDown' | 'downUp' | 'random';
+
+export const ARP_PATTERNS: readonly {
+  id: ArpPattern;
+  label: string;
+  shortcut: string;
+}[] = [
+  { id: 'up', label: 'UP', shortcut: '↑' },
+  { id: 'down', label: 'DOWN', shortcut: '↓' },
+  { id: 'upDown', label: 'UP-DN', shortcut: '→' },
+  { id: 'downUp', label: 'DN-UP', shortcut: '←' },
+  { id: 'random', label: 'RAND', shortcut: '/' },
+];
+
+/** Note value relative to the transport sixteenth grid. */
+export type ArpRate = '1/4' | '1/8' | '1/16' | '1/32';
+
+export const ARP_RATES: readonly { id: ArpRate; label: string; sixteenths: number }[] = [
+  { id: '1/4', label: '1/4', sixteenths: 4 },
+  { id: '1/8', label: '1/8', sixteenths: 2 },
+  { id: '1/16', label: '1/16', sixteenths: 1 },
+  { id: '1/32', label: '1/32', sixteenths: 0.5 },
+];
+
+export const ARP_OCT_MIN = 1;
+export const ARP_OCT_MAX = 4;
+export const DEFAULT_ARP_OCTAVES = 2;
 
 /** Default pad bus level — sits under kick/bass in the mix. */
 export const DEFAULT_SYNTH_VOLUME = 0.55;
@@ -47,12 +73,15 @@ export class PadSynth {
   /** Second VCO for MS-20 / pulse detuned hold voices. */
   private oscB: OscillatorNode | null = null;
   private active = false;
-  private mode: PadMode = 'hold';
+  private mode: PadMode = 'arp';
   private voice: SynthVoiceId = DEFAULT_SYNTH_VOICE;
   private xNorm = 0.5;
-  private yNorm = 0.5;
+  private yNorm = yNormFromArpOctaves(DEFAULT_ARP_OCTAVES);
   private bpm = DEFAULT_BPM;
   private arpIndex = 0;
+  private arpPattern: ArpPattern = 'up';
+  private arpRate: ArpRate = '1/16';
+  private arpOctaves = DEFAULT_ARP_OCTAVES;
   /** Ignore transport ticks before this time (avoids double-hit with engage seed). */
   private suppressUntil = 0;
   /** Last scale degree (−1 = none). */
@@ -89,6 +118,18 @@ export class PadSynth {
 
   get padMode(): PadMode {
     return this.mode;
+  }
+
+  get arpPatternId(): ArpPattern {
+    return this.arpPattern;
+  }
+
+  get arpRateId(): ArpRate {
+    return this.arpRate;
+  }
+
+  get arpOctaveSpan(): number {
+    return this.arpOctaves;
   }
 
   get synthVoiceId(): SynthVoiceId {
@@ -179,6 +220,33 @@ export class PadSynth {
     }
   }
 
+  setArpPattern(pattern: ArpPattern): void {
+    if (this.arpPattern === pattern) {
+      return;
+    }
+    this.arpPattern = pattern;
+    this.arpIndex = 0;
+  }
+
+  setArpRate(rate: ArpRate): void {
+    if (this.arpRate === rate) {
+      return;
+    }
+    this.arpRate = rate;
+    this.arpIndex = 0;
+  }
+
+  /** Discrete arpeggio octave span (1–4). Also live-synced from pad Y in ARP. */
+  setArpOctaves(octaves: number): void {
+    const next = clampArpOctaves(octaves);
+    if (this.arpOctaves === next) {
+      return;
+    }
+    this.arpOctaves = next;
+    this.arpIndex = 0;
+    this.yNorm = yNormFromArpOctaves(next);
+  }
+
   /**
    * HOLD: X scale note, Y filter.
    * ARP: X scale root degree, Y octave span.
@@ -188,6 +256,9 @@ export class PadSynth {
   noteOn(xNorm: number, yNorm: number): void {
     this.xNorm = clamp01(xNorm);
     this.yNorm = clamp01(yNorm);
+    if (this.mode === 'arp') {
+      this.arpOctaves = octaveSpanFromY(this.yNorm);
+    }
     this.arpIndex = 0;
     this.lastDegree = -1;
     this.beginVoice(this.xNorm, this.yNorm);
@@ -201,6 +272,10 @@ export class PadSynth {
     this.yNorm = clamp01(yNorm);
     if (this.mode === 'hold') {
       this.setHoldParams(this.xNorm, this.yNorm, this.ctx.currentTime, false);
+      return;
+    }
+    if (this.mode === 'arp') {
+      this.arpOctaves = octaveSpanFromY(this.yNorm);
       return;
     }
     if (this.mode === 'ims') {
@@ -228,10 +303,7 @@ export class PadSynth {
     }
 
     if (this.mode === 'arp') {
-      if (step % ARP_STEPS_PER_HIT !== 0) {
-        return;
-      }
-      this.fireArpNote(time, stepDur * 0.7);
+      this.scheduleArpHits(step, time, stepDur);
       return;
     }
 
@@ -281,13 +353,31 @@ export class PadSynth {
     this.suppressUntil = now + stepDur * 0.55;
 
     if (this.mode === 'arp') {
-      this.fireArpNote(now, stepDur * 0.7);
+      this.fireArpNote(now, arpNoteDuration(stepDur, this.arpRate));
       return;
     }
 
     const rate = gateRateFromY(yNorm);
     const noteDur = stepDur * Math.min(rate >= 1 ? rate : 0.5, 2) * 0.45;
     this.fireGateNote(now, noteDur);
+  }
+
+  private scheduleArpHits(step: number, time: number, stepDur: number): void {
+    const sixteenths = arpSixteenths(this.arpRate);
+    const noteDur = arpNoteDuration(stepDur, this.arpRate);
+
+    if (sixteenths >= 1) {
+      if (step % sixteenths !== 0) {
+        return;
+      }
+      this.fireArpNote(time, noteDur);
+      return;
+    }
+
+    // 1/32: two hits per sixteenth.
+    const half = stepDur * 0.5;
+    this.fireArpNote(time, noteDur);
+    this.fireArpNote(time + half, noteDur);
   }
 
   private handleImsMove(time: number): void {
@@ -350,9 +440,14 @@ export class PadSynth {
 
   private fireArpNote(time: number, duration: number): void {
     const startDegree = degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves);
-    const octaves = octaveSpanFromY(this.yNorm);
-    const chord = buildArpDegrees(this.rootMidi, this.scaleId, startDegree, octaves);
-    const freq = chord[this.arpIndex % chord.length] ?? this.freqFromDegree(startDegree);
+    const chord = buildArpDegrees(
+      this.rootMidi,
+      this.scaleId,
+      startDegree,
+      this.arpOctaves,
+    );
+    const idx = arpChordIndex(this.arpPattern, this.arpIndex, chord.length);
+    const freq = chord[idx] ?? this.freqFromDegree(startDegree);
     this.arpIndex += 1;
     this.playVoiceOneShot(freq, time, duration, false);
   }
@@ -676,10 +771,61 @@ function holdCutoffMul(voice: SynthVoiceId, imsLegato: boolean): number {
   return 6;
 }
 
-/** Top of pad = 3 octaves, bottom = 1. */
+/** Top of pad = ARP_OCT_MAX, bottom = ARP_OCT_MIN. */
 function octaveSpanFromY(yNorm: number): number {
   const y = clamp01(yNorm);
-  return Math.min(3, 1 + Math.floor((1 - y) * 3));
+  const span = ARP_OCT_MAX - ARP_OCT_MIN + 1;
+  return Math.min(ARP_OCT_MAX, ARP_OCT_MIN + Math.floor((1 - y) * span));
+}
+
+function yNormFromArpOctaves(octaves: number): number {
+  const clamped = clampArpOctaves(octaves);
+  const span = ARP_OCT_MAX - ARP_OCT_MIN;
+  if (span <= 0) {
+    return 0.5;
+  }
+  // Center of the band for this octave count (top = more octaves).
+  return 1 - (clamped - ARP_OCT_MIN + 0.5) / (span + 1);
+}
+
+function clampArpOctaves(octaves: number): number {
+  return Math.min(ARP_OCT_MAX, Math.max(ARP_OCT_MIN, Math.round(octaves)));
+}
+
+function arpSixteenths(rate: ArpRate): number {
+  return ARP_RATES.find((r) => r.id === rate)?.sixteenths ?? 1;
+}
+
+function arpNoteDuration(stepDur: number, rate: ArpRate): number {
+  const sixteenths = arpSixteenths(rate);
+  const hitDur = stepDur * (sixteenths >= 1 ? sixteenths : 0.5);
+  return hitDur * 0.7;
+}
+
+/** Map step counter → index in the chord for Logic-style directions. */
+function arpChordIndex(pattern: ArpPattern, step: number, length: number): number {
+  if (length <= 1) {
+    return 0;
+  }
+  if (pattern === 'random') {
+    return Math.floor(Math.random() * length);
+  }
+  if (pattern === 'up') {
+    return step % length;
+  }
+  if (pattern === 'down') {
+    return (length - 1 - (step % length) + length) % length;
+  }
+
+  // Bounce without doubling the turning points: 0..n-1..1 then repeat.
+  const period = (length - 1) * 2;
+  const pos = ((step % period) + period) % period;
+  if (pattern === 'upDown') {
+    return pos < length ? pos : period - pos;
+  }
+  // downUp: mirror of upDown.
+  const upIdx = pos < length ? pos : period - pos;
+  return length - 1 - upIdx;
 }
 
 /** Walk scale degrees from startDegree across `octaves` of the scale. */
