@@ -228,6 +228,57 @@ body {
   gap: 0.35rem;
 }
 
+.key-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.octave-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.octave-label {
+  min-width: 1.6rem;
+  color: var(--accent);
+  letter-spacing: 0.12em;
+  font-size: 0.65rem;
+  text-align: right;
+}
+
+.octave-btn {
+  appearance: none;
+  margin: 0;
+  padding: 0.28rem 0.45rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  outline: none;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.octave-btn:hover:not(:disabled),
+.octave-btn:focus-visible:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.octave-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .piano {
   position: relative;
   width: 100%;

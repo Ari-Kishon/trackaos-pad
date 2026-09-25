@@ -7,7 +7,14 @@ import {
   DEFAULT_BPM,
   DRUM_PRESETS,
 } from '../audio/presets';
-import { createKeyStrip, isTypingTarget, midiForBassKey } from './keyboard';
+import {
+  OCTAVE_DOWN_KEY,
+  OCTAVE_UP_KEY,
+  clampOctave,
+  createKeyStrip,
+  isTypingTarget,
+  midiForBassKey,
+} from './keyboard';
 import { createPad } from './pad';
 
 export function mountApp(root: HTMLElement): void {
@@ -90,9 +97,7 @@ export function mountApp(root: HTMLElement): void {
   syncPadMeta(engine.pad.padMode);
 
   padFrame.append(padSurface, padMeta);
-
-  const keyStrip = createKeyStrip();
-  stage.append(padFrame, keyStrip.root);
+  stage.append(padFrame);
 
   root.append(header, controls, stage);
 
@@ -185,6 +190,7 @@ export function mountApp(root: HTMLElement): void {
 
   /** Most-recently-pressed held keys (last = sounding). */
   const heldKeys: string[] = [];
+  let bassOctave = 0;
 
   const voiceFromHeld = (): void => {
     const top = heldKeys[heldKeys.length - 1];
@@ -192,7 +198,7 @@ export function mountApp(root: HTMLElement): void {
       engine.keyboardNoteOff();
       return;
     }
-    const midi = midiForBassKey(top);
+    const midi = midiForBassKey(top, bassOctave);
     if (midi === undefined) {
       return;
     }
@@ -200,12 +206,44 @@ export function mountApp(root: HTMLElement): void {
     paintRootX(xNorm);
   };
 
+  const applyOctave = (next: number): void => {
+    const clamped = clampOctave(next);
+    if (clamped === bassOctave) {
+      return;
+    }
+    bassOctave = clamped;
+    keyStrip.setOctave(bassOctave);
+    voiceFromHeld();
+  };
+
+  const keyStrip = createKeyStrip({
+    onOctaveDown: () => {
+      applyOctave(bassOctave - 1);
+    },
+    onOctaveUp: () => {
+      applyOctave(bassOctave + 1);
+    },
+  });
+  stage.append(keyStrip.root);
+
   window.addEventListener('keydown', (event) => {
     if (event.repeat || isTypingTarget(event.target)) {
       return;
     }
     const key = event.key.toLowerCase();
-    const midi = midiForBassKey(key);
+
+    if (key === OCTAVE_DOWN_KEY) {
+      event.preventDefault();
+      applyOctave(bassOctave - 1);
+      return;
+    }
+    if (key === OCTAVE_UP_KEY) {
+      event.preventDefault();
+      applyOctave(bassOctave + 1);
+      return;
+    }
+
+    const midi = midiForBassKey(key, bassOctave);
     if (midi === undefined) {
       return;
     }
@@ -225,7 +263,10 @@ export function mountApp(root: HTMLElement): void {
       return;
     }
     const key = event.key.toLowerCase();
-    const midi = midiForBassKey(key);
+    if (key === OCTAVE_DOWN_KEY || key === OCTAVE_UP_KEY) {
+      return;
+    }
+    const midi = midiForBassKey(key, bassOctave);
     if (midi === undefined) {
       return;
     }
