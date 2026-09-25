@@ -1,9 +1,19 @@
 import { AudioEngine } from '../audio/engine';
-import { BASS_PRESETS, BPM, DRUM_PRESETS } from '../audio/presets';
+import {
+  BASS_PRESETS,
+  BPM_MAX,
+  BPM_MIN,
+  DEFAULT_BPM,
+  DRUM_PRESETS,
+} from '../audio/presets';
 import { createPad } from './pad';
 
 export function mountApp(root: HTMLElement): void {
   const engine = new AudioEngine();
+
+  const unlockAudio = (): void => {
+    engine.unlock();
+  };
 
   root.replaceChildren();
   root.className = 'shell';
@@ -14,7 +24,6 @@ export function mountApp(root: HTMLElement): void {
     '<span class="brand-mark">TRACKAOS</span><span class="brand-sub">PAD</span>';
 
   const status = el('p', 'status-line');
-  status.textContent = `STANDBY  ·  ${String(BPM)} BPM`;
 
   header.append(brand, status);
 
@@ -33,12 +42,14 @@ export function mountApp(root: HTMLElement): void {
     engine.bassPresetId,
   );
 
+  const bpmField = fieldBpm(engine.currentBpm);
+
   const transport = el('button', 'transport') as HTMLButtonElement;
   transport.type = 'button';
   transport.textContent = 'START';
   transport.setAttribute('aria-pressed', 'false');
 
-  controls.append(drumField.root, bassField.root, transport);
+  controls.append(drumField.root, bassField.root, bpmField.root, transport);
 
   const stage = el('section', 'pad-stage');
   const padFrame = el('div', 'pad-frame');
@@ -59,7 +70,7 @@ export function mountApp(root: HTMLElement): void {
   const setStatus = (playing: boolean, padLive: boolean): void => {
     const transportLabel = playing ? 'TRANSPORT ON' : 'STANDBY';
     const padLabel = padLive ? ' ·  PAD LIVE' : '';
-    status.textContent = `${transportLabel}${padLabel}  ·  ${String(BPM)} BPM`;
+    status.textContent = `${transportLabel}${padLabel}  ·  ${String(engine.currentBpm)} BPM`;
     status.classList.toggle('is-live', playing || padLive);
   };
 
@@ -71,37 +82,51 @@ export function mountApp(root: HTMLElement): void {
     setStatus(playing, engine.pad.isActive);
   };
 
-  const ensureAudio = async (): Promise<void> => {
-    await engine.resume();
+  const applyBpm = (raw: number): void => {
+    engine.setBpm(raw);
+    const bpm = engine.currentBpm;
+    bpmField.slider.value = String(bpm);
+    bpmField.number.value = String(bpm);
+    setStatus(engine.isPlaying, engine.pad.isActive);
   };
 
+  // Unlock AudioContext on first user gesture anywhere in the shell.
+  root.addEventListener('pointerdown', unlockAudio, { once: true });
+  root.addEventListener('keydown', unlockAudio, { once: true });
+
   drumField.select.addEventListener('change', () => {
+    unlockAudio();
     engine.setDrumPreset(drumField.select.value);
   });
 
   bassField.select.addEventListener('change', () => {
+    unlockAudio();
     engine.setBassPreset(bassField.select.value);
   });
 
+  bpmField.slider.addEventListener('input', () => {
+    applyBpm(Number(bpmField.slider.value));
+  });
+
+  bpmField.number.addEventListener('change', () => {
+    applyBpm(Number(bpmField.number.value));
+  });
+
   transport.addEventListener('click', () => {
-    void (async () => {
-      await ensureAudio();
-      engine.toggle();
-      syncTransportUi();
-    })();
+    unlockAudio();
+    engine.toggle();
+    syncTransportUi();
   });
 
   createPad(padSurface, {
     onEngage: (norm) => {
-      void (async () => {
-        await ensureAudio();
-        if (!engine.isPlaying) {
-          engine.start();
-          syncTransportUi();
-        }
-        engine.pad.noteOn(norm.x, norm.y);
-        setStatus(engine.isPlaying, true);
-      })();
+      unlockAudio();
+      if (!engine.isPlaying) {
+        engine.start();
+        syncTransportUi();
+      }
+      engine.pad.noteOn(norm.x, norm.y);
+      setStatus(engine.isPlaying, true);
     },
     onMove: (norm) => {
       engine.pad.noteMove(norm.x, norm.y);
@@ -112,6 +137,7 @@ export function mountApp(root: HTMLElement): void {
     },
   });
 
+  applyBpm(DEFAULT_BPM);
   syncTransportUi();
 }
 
@@ -150,4 +176,41 @@ function fieldSelect(
 
   root.append(caption, select);
   return { root, select };
+}
+
+function fieldBpm(initial: number): {
+  root: HTMLElement;
+  slider: HTMLInputElement;
+  number: HTMLInputElement;
+} {
+  const root = el('div', 'field field-bpm');
+
+  const caption = el('span', 'field-label');
+  caption.textContent = 'BPM';
+
+  const row = el('div', 'bpm-row');
+
+  const number = document.createElement('input');
+  number.type = 'number';
+  number.id = 'bpm-value';
+  number.className = 'bpm-number';
+  number.min = String(BPM_MIN);
+  number.max = String(BPM_MAX);
+  number.step = '1';
+  number.value = String(initial);
+  number.setAttribute('aria-label', 'BPM');
+
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.id = 'bpm-slider';
+  slider.className = 'bpm-slider';
+  slider.min = String(BPM_MIN);
+  slider.max = String(BPM_MAX);
+  slider.step = '1';
+  slider.value = String(initial);
+  slider.setAttribute('aria-label', 'BPM slider');
+
+  row.append(number, slider);
+  root.append(caption, row);
+  return { root, slider, number };
 }
