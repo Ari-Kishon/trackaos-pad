@@ -62,7 +62,7 @@ export function midiForBassKey(
 
 /** MIDI C name for octave 0 = C2, e.g. octave −1 → C1. */
 export function octaveRootLabel(octave: number): string {
-  return `C${2 + clampOctave(octave)}`;
+  return `C${String(2 + clampOctave(octave))}`;
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {
@@ -98,7 +98,7 @@ export function createKeyStrip(handlers: KeyStripHandlers): KeyStripApi {
 
   const caption = document.createElement('span');
   caption.className = 'field-label';
-  caption.textContent = 'ROOT · KEYS';
+  caption.textContent = 'KEYS';
 
   const octaveRow = document.createElement('div');
   octaveRow.className = 'octave-row';

@@ -1,11 +1,13 @@
 import { DEFAULT_BPM, midiToHz, secondsPerStep } from './presets';
-
-/** Continuous techno-friendly pitch range across pad X (≈ A1–A4). */
-const FREQ_MIN = 55;
-const FREQ_MAX = 440;
-
-/** Chord tones within one octave (minor 7), in semitones. */
-const ARP_DEGREE_SEMIS = [0, 3, 7, 10] as const;
+import {
+  DEFAULT_KEY_PC,
+  DEFAULT_SCALE_ID,
+  degreeFromXNorm,
+  midiFromDegree,
+  rootMidiFromKeyPc,
+  scaleById,
+  type ScaleId,
+} from './scale';
 
 /** Gate rate: steps between hits, top→bottom (fast → slow). */
 const GATE_RATE_STEPS = [0.5, 1, 2, 4] as const;
@@ -13,13 +15,6 @@ const GATE_RATE_STEPS = [0.5, 1, 2, 4] as const;
 /** Fixed arp subdivision (one hit per sixteenth). */
 const ARP_STEPS_PER_HIT = 1;
 
-/**
- * iMS-20 performance Kaoss: Aeolian over ~3 octaves from A2.
- * Official pad maps X→NOTE (scale), Y→GATE (25%…LEGATO).
- */
-const IMS_ROOT_MIDI = 45;
-const IMS_SCALE_SEMIS = [0, 2, 3, 5, 7, 8, 10] as const;
-const IMS_OCTAVES = 3;
 /** Top→bottom: LEGATO, 100%, 75%, 50%, 25% of a sixteenth. */
 const IMS_GATE_FRACS = [Number.POSITIVE_INFINITY, 1, 0.75, 0.5, 0.25] as const;
 
@@ -46,10 +41,13 @@ export class PadSynth {
   private arpIndex = 0;
   /** Ignore transport ticks before this time (avoids double-hit with engage seed). */
   private suppressUntil = 0;
-  /** Last IMS scale degree index (−1 = none). */
-  private imsDegree = -1;
+  /** Last scale degree (−1 = none). */
+  private lastDegree = -1;
   /** Audio time when the next IMS one-shot may re-fire while held. */
   private imsRetriggerAt = 0;
+  /** Key/Scale pitch world — pad X only picks a degree within this. */
+  private rootMidi = rootMidiFromKeyPc(DEFAULT_KEY_PC);
+  private scaleId: ScaleId = DEFAULT_SCALE_ID;
 
   constructor(ctx: AudioContext, destination: AudioNode) {
     this.ctx = ctx;
@@ -77,8 +75,36 @@ export class PadSynth {
     return this.mode;
   }
 
+  get keyRootMidi(): number {
+    return this.rootMidi;
+  }
+
+  get keyScaleId(): ScaleId {
+    return this.scaleId;
+  }
+
   setBpm(bpm: number): void {
     this.bpm = bpm;
+  }
+
+  /**
+   * Own absolute pitch via Key/Scale. Live pad voice retargets if held.
+   */
+  setKeyScale(rootMidi: number, scaleId: ScaleId): void {
+    this.rootMidi = rootMidi;
+    this.scaleId = scaleId;
+    if (!this.active) {
+      this.lastDegree = -1;
+      return;
+    }
+    const now = this.ctx.currentTime;
+    if (this.mode === 'hold') {
+      this.setHoldParams(this.xNorm, this.yNorm, now, true);
+      return;
+    }
+    if (this.mode === 'ims') {
+      this.fireImsVoice(now, true);
+    }
   }
 
   setMode(mode: PadMode): void {
@@ -92,7 +118,7 @@ export class PadSynth {
     }
     this.mode = mode;
     this.arpIndex = 0;
-    this.imsDegree = -1;
+    this.lastDegree = -1;
     this.imsRetriggerAt = 0;
     if (wasActive) {
       this.beginVoice(this.xNorm, this.yNorm);
@@ -100,16 +126,16 @@ export class PadSynth {
   }
 
   /**
-   * HOLD: X pitch, Y filter.
-   * ARP: X root, Y octave span.
-   * GATE: X pitch, Y rate.
+   * HOLD: X scale note, Y filter.
+   * ARP: X scale root degree, Y octave span.
+   * GATE: X scale note, Y rate.
    * IMS: X scale note, Y gate (iMS-20 performance Kaoss).
    */
   noteOn(xNorm: number, yNorm: number): void {
     this.xNorm = clamp01(xNorm);
     this.yNorm = clamp01(yNorm);
     this.arpIndex = 0;
-    this.imsDegree = -1;
+    this.lastDegree = -1;
     this.beginVoice(this.xNorm, this.yNorm);
   }
 
@@ -133,22 +159,9 @@ export class PadSynth {
       return;
     }
     this.active = false;
-    this.imsDegree = -1;
+    this.lastDegree = -1;
     this.imsRetriggerAt = 0;
     this.silenceHold(this.ctx.currentTime);
-  }
-
-  /**
-   * Snap pad X (root/pitch) to a MIDI note via inverse of freqFromX.
-   * Updates live HOLD frequency when the pad voice is already engaged.
-   * @returns clamped xNorm used for the pad.
-   */
-  setRootMidi(midi: number): number {
-    this.xNorm = xNormFromFreq(midiToHz(midi));
-    if (this.active && this.mode === 'hold') {
-      this.setHoldParams(this.xNorm, this.yNorm, this.ctx.currentTime, true);
-    }
-    return this.xNorm;
   }
 
   /** Transport sixteenth-note tick — drives ARP, GATE, and IMS while held. */
@@ -224,11 +237,11 @@ export class PadSynth {
   }
 
   private handleImsMove(time: number): void {
-    const degree = imsDegreeFromX(this.xNorm);
+    const degree = degreeFromXNorm(this.xNorm, this.scaleId);
     const legato = imsGateIsLegato(this.yNorm);
 
     if (legato) {
-      if (degree !== this.imsDegree) {
+      if (degree !== this.lastDegree) {
         this.fireImsVoice(time, true);
       }
       return;
@@ -241,18 +254,18 @@ export class PadSynth {
       return;
     }
 
-    if (degree !== this.imsDegree) {
+    if (degree !== this.lastDegree) {
       this.fireImsVoice(time, true);
     }
   }
 
   private fireImsVoice(time: number, force: boolean): void {
-    const degree = imsDegreeFromX(this.xNorm);
+    const degree = degreeFromXNorm(this.xNorm, this.scaleId);
     const frac = imsGateFracFromY(this.yNorm);
     const stepDur = secondsPerStep(this.bpm);
-    const freq = imsFreqFromDegree(degree);
+    const freq = this.freqFromDegree(degree);
 
-    this.imsDegree = degree;
+    this.lastDegree = degree;
 
     if (!Number.isFinite(frac)) {
       // LEGATO — dual-osc MS-20-ish sustain while held.
@@ -261,7 +274,6 @@ export class PadSynth {
         this.osc.type = 'sawtooth';
         this.osc.frequency.setValueAtTime(freq, time);
       }
-      // Bright resonant LP; fixed HP bite via one-shot path only — keep hold simple.
       this.filter.Q.setValueAtTime(8.5, time);
       this.filter.frequency.setValueAtTime(Math.min(freq * 8, 4200), time);
       this.openHoldAmp(time, 0.78, force ? 0.008 : 0.004);
@@ -277,19 +289,23 @@ export class PadSynth {
   }
 
   private fireArpNote(time: number, duration: number): void {
-    const root = freqFromX(this.xNorm);
+    const startDegree = degreeFromXNorm(this.xNorm, this.scaleId);
     const octaves = octaveSpanFromY(this.yNorm);
-    const chord = buildArpChord(root, octaves);
-    const freq = chord[this.arpIndex % chord.length] ?? root;
+    const chord = buildArpDegrees(this.rootMidi, this.scaleId, startDegree, octaves);
+    const freq = chord[this.arpIndex % chord.length] ?? this.freqFromDegree(startDegree);
     this.arpIndex += 1;
     const cutoff = Math.min(freq * 6, 5200);
     this.playOneShot(freq, time, duration, cutoff);
   }
 
   private fireGateNote(time: number, duration: number): void {
-    const freq = freqFromX(this.xNorm);
+    const freq = this.freqFromDegree(degreeFromXNorm(this.xNorm, this.scaleId));
     const cutoff = Math.min(freq * 5.5, 4800);
     this.playOneShot(freq, time, duration, cutoff);
+  }
+
+  private freqFromDegree(degree: number): number {
+    return midiToHz(midiFromDegree(this.rootMidi, this.scaleId, degree));
   }
 
   /** Independent voice — avoids shared-amp automation fights. */
@@ -410,8 +426,10 @@ export class PadSynth {
     if (!this.osc) {
       return;
     }
-    const freq = freqFromX(xNorm);
+    const degree = degreeFromXNorm(xNorm, this.scaleId);
+    const freq = this.freqFromDegree(degree);
     const cutoff = 220 + (1 - clamp01(yNorm)) * 6800;
+    this.lastDegree = degree;
 
     if (snap) {
       this.osc.frequency.setValueAtTime(freq, time);
@@ -423,36 +441,26 @@ export class PadSynth {
   }
 }
 
-function freqFromX(xNorm: number): number {
-  const x = clamp01(xNorm);
-  return FREQ_MIN * (FREQ_MAX / FREQ_MIN) ** x;
-}
-
-/** Inverse of freqFromX — clamp to pad pitch range. */
-export function xNormFromFreq(hz: number): number {
-  const lo = Math.log(FREQ_MIN);
-  const hi = Math.log(FREQ_MAX);
-  const f = Math.log(Math.min(FREQ_MAX, Math.max(FREQ_MIN, hz)));
-  return clamp01((f - lo) / (hi - lo));
-}
-
 /** Top of pad = 3 octaves, bottom = 1. */
 function octaveSpanFromY(yNorm: number): number {
   const y = clamp01(yNorm);
   return Math.min(3, 1 + Math.floor((1 - y) * 3));
 }
 
-function buildArpChord(rootHz: number, octaves: number): number[] {
-  const notes: number[] = [];
-  for (let oct = 0; oct < octaves; oct += 1) {
-    for (const degree of ARP_DEGREE_SEMIS) {
-      const hz = rootHz * 2 ** ((degree + oct * 12) / 12);
-      if (hz <= FREQ_MAX * 4) {
-        notes.push(hz);
-      }
-    }
+/** Walk scale degrees from startDegree across `octaves` of the scale. */
+function buildArpDegrees(
+  rootMidi: number,
+  scaleId: ScaleId,
+  startDegree: number,
+  octaves: number,
+): number[] {
+  const perOct = scaleById(scaleId).semis.length;
+  const count = Math.max(1, perOct * octaves);
+  const freqs: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    freqs.push(midiToHz(midiFromDegree(rootMidi, scaleId, startDegree + i)));
   }
-  return notes.length > 0 ? notes : [rootHz];
+  return freqs;
 }
 
 function gateRateFromY(yNorm: number): number {
@@ -462,23 +470,6 @@ function gateRateFromY(yNorm: number): number {
     Math.floor(y * GATE_RATE_STEPS.length),
   );
   return GATE_RATE_STEPS[idx] ?? 1;
-}
-
-function imsDegreeCount(): number {
-  return IMS_SCALE_SEMIS.length * IMS_OCTAVES;
-}
-
-function imsDegreeFromX(xNorm: number): number {
-  const n = imsDegreeCount();
-  const idx = Math.floor(clamp01(xNorm) * n);
-  return Math.min(n - 1, Math.max(0, idx));
-}
-
-function imsFreqFromDegree(degree: number): number {
-  const perOct = IMS_SCALE_SEMIS.length;
-  const oct = Math.floor(degree / perOct);
-  const semi = IMS_SCALE_SEMIS[degree % perOct] ?? 0;
-  return midiToHz(IMS_ROOT_MIDI + oct * 12 + semi);
 }
 
 function imsGateFracFromY(yNorm: number): number {

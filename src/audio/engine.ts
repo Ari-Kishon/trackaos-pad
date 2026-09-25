@@ -170,19 +170,17 @@ export class AudioEngine {
   }
 
   /**
-   * Independent monophonic bass voice (held while key is down).
-   * Also snaps pad root/pitch via setRootMidi. Does not start transport.
-   * @returns pad xNorm after root snap (for UI cursor).
+   * Independent monophonic voice (held while key is down).
+   * Does not touch the pad or start transport.
    */
-  keyboardNoteOn(midi: number): number {
+  keyboardNoteOn(midi: number): void {
     this.unlock();
-    const xNorm = this.pad.setRootMidi(midi);
     const now = this.ctx.currentTime;
     const hz = midiToHz(midi);
     this.ensureKeyboardOsc();
     const osc = this.keyboardOsc;
     if (!osc) {
-      return xNorm;
+      return;
     }
     osc.frequency.setValueAtTime(Math.max(hz, 20), now);
     this.keyboardFilter.frequency.setValueAtTime(
@@ -193,14 +191,12 @@ export class AudioEngine {
     g.cancelScheduledValues(now);
     g.setValueAtTime(Math.max(g.value, 0.0001), now);
     g.exponentialRampToValueAtTime(0.82, now + 0.012);
-    return xNorm;
   }
 
   /** Legato retarget while another key remains held. */
-  keyboardNoteMove(midi: number): number {
-    const xNorm = this.pad.setRootMidi(midi);
+  keyboardNoteMove(midi: number): void {
     if (!this.keyboardOsc) {
-      return xNorm;
+      return;
     }
     const now = this.ctx.currentTime;
     const hz = midiToHz(midi);
@@ -210,7 +206,6 @@ export class AudioEngine {
       now,
       0.015,
     );
-    return xNorm;
   }
 
   keyboardNoteOff(): void {

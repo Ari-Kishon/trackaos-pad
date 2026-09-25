@@ -16,13 +16,15 @@ npm run start      # build + preview
 ## Play
 
 1. Choose a **DRUM**, **BASS**, and **PAD** mode (HOLD / ARP / GATE / IMS).
-2. Set **BPM**, then press **START**, or press the pad (transport starts on first pad engage).
-3. Drag on the pad:
-   - **HOLD** — X pitch, Y filter
-   - **ARP** — X chord root, Y octave span (1–3), 16th-synced
-   - **GATE** — X pitch, Y gate rate (synced to transport)
-   - **IMS** — iMS-20 performance Kaoss: X scale note (Aeolian), Y gate (legato → 25%), MS-20-ish dual-osc voice
+2. Set **KEY** and **SCALE** — these own absolute pitch (iMS-20-style). Pad X only picks a degree in that pitch world.
+3. Set **BPM**, then press **START**, or press the pad (transport starts on first pad engage).
+4. Drag on the pad (X is always scale-quantized):
+   - **HOLD** — X note, Y filter
+   - **ARP** — X root degree, Y octave span (1–3), walks the scale, 16th-synced
+   - **GATE** — X note, Y gate rate (synced to transport)
+   - **IMS** — iMS-20 performance Kaoss: X note, Y gate (legato → 25%), MS-20-ish dual-osc voice
    Release ends the voice.
+5. Computer **KEYS** play an independent monophonic voice (chromatic). They do not move the pad.
 
 Aesthetic is sparse HUD — cool near-black ground, hairline grid, pale amber accent.
 

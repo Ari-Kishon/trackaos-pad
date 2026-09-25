@@ -8,13 +8,14 @@ import {
   DRUM_PRESETS,
 } from '../audio/presets';
 import {
-  OCTAVE_DOWN_KEY,
-  OCTAVE_UP_KEY,
-  clampOctave,
-  createKeyStrip,
-  isTypingTarget,
-  midiForBassKey,
-} from './keyboard';
+  DEFAULT_KEY_PC,
+  DEFAULT_SCALE_ID,
+  KEY_OPTIONS,
+  SCALES,
+  rootMidiFromKeyPc,
+  type ScaleId,
+} from '../audio/scale';
+import { createKeyStrip, isTypingTarget, midiForBassKey, clampOctave, OCTAVE_DOWN_KEY, OCTAVE_UP_KEY } from './keyboard';
 import { createPad } from './pad';
 
 export function mountApp(root: HTMLElement): void {
@@ -56,6 +57,18 @@ export function mountApp(root: HTMLElement): void {
     PAD_MODES.map((p) => ({ value: p.id, label: p.label })),
     engine.pad.padMode,
   );
+  const keyField = fieldSelect(
+    'KEY',
+    'pad-key',
+    KEY_OPTIONS.map((k) => ({ value: String(k.pc), label: k.label })),
+    String(DEFAULT_KEY_PC),
+  );
+  const scaleField = fieldSelect(
+    'SCALE',
+    'pad-scale',
+    SCALES.map((s) => ({ value: s.id, label: s.label })),
+    DEFAULT_SCALE_ID,
+  );
 
   const bpmField = fieldBpm(engine.currentBpm);
 
@@ -64,7 +77,15 @@ export function mountApp(root: HTMLElement): void {
   transport.textContent = 'START';
   transport.setAttribute('aria-pressed', 'false');
 
-  controls.append(drumField.root, bassField.root, modeField.root, bpmField.root, transport);
+  controls.append(
+    drumField.root,
+    bassField.root,
+    modeField.root,
+    keyField.root,
+    scaleField.root,
+    bpmField.root,
+    transport,
+  );
 
   const stage = el('section', 'pad-stage');
   const padFrame = el('div', 'pad-frame');
@@ -81,7 +102,7 @@ export function mountApp(root: HTMLElement): void {
 
   const syncPadMeta = (mode: PadMode): void => {
     if (mode === 'hold') {
-      padMetaX.textContent = 'X · PITCH';
+      padMetaX.textContent = 'X · NOTE';
       padMetaY.textContent = 'Y · FILTER';
     } else if (mode === 'arp') {
       padMetaX.textContent = 'X · ROOT';
@@ -90,13 +111,14 @@ export function mountApp(root: HTMLElement): void {
       padMetaX.textContent = 'X · NOTE';
       padMetaY.textContent = 'Y · GATE';
     } else {
-      padMetaX.textContent = 'X · PITCH';
+      padMetaX.textContent = 'X · NOTE';
       padMetaY.textContent = 'Y · RATE';
     }
   };
   syncPadMeta(engine.pad.padMode);
 
   padFrame.append(padSurface, padMeta);
+
   stage.append(padFrame);
 
   root.append(header, controls, stage);
@@ -124,7 +146,11 @@ export function mountApp(root: HTMLElement): void {
     setStatus(engine.isPlaying, engine.pad.isActive);
   };
 
-  let padVisual = { x: 0.5, y: 0.5, active: false };
+  const applyKeyScale = (): void => {
+    const pc = Number(keyField.select.value);
+    const scaleId = scaleField.select.value as ScaleId;
+    engine.pad.setKeyScale(rootMidiFromKeyPc(pc), scaleId);
+  };
 
   // Unlock AudioContext on first user gesture anywhere in the shell.
   root.addEventListener('pointerdown', unlockAudio, { once: true });
@@ -147,6 +173,16 @@ export function mountApp(root: HTMLElement): void {
     syncPadMeta(mode);
   });
 
+  keyField.select.addEventListener('change', () => {
+    unlockAudio();
+    applyKeyScale();
+  });
+
+  scaleField.select.addEventListener('change', () => {
+    unlockAudio();
+    applyKeyScale();
+  });
+
   bpmField.slider.addEventListener('input', () => {
     applyBpm(Number(bpmField.slider.value));
   });
@@ -161,32 +197,24 @@ export function mountApp(root: HTMLElement): void {
     syncTransportUi();
   });
 
-  const pad = createPad(padSurface, {
+  createPad(padSurface, {
     onEngage: (norm) => {
       unlockAudio();
       if (!engine.isPlaying) {
         engine.start();
         syncTransportUi();
       }
-      padVisual = { x: norm.x, y: norm.y, active: true };
       engine.pad.noteOn(norm.x, norm.y);
       setStatus(engine.isPlaying, true);
     },
     onMove: (norm) => {
-      padVisual = { x: norm.x, y: norm.y, active: true };
       engine.pad.noteMove(norm.x, norm.y);
     },
     onRelease: () => {
-      padVisual = { ...padVisual, active: false };
       engine.pad.noteOff();
       setStatus(engine.isPlaying, false);
     },
   });
-
-  const paintRootX = (xNorm: number): void => {
-    padVisual = { ...padVisual, x: xNorm };
-    pad.setVisual(padVisual);
-  };
 
   /** Most-recently-pressed held keys (last = sounding). */
   const heldKeys: string[] = [];
@@ -202,8 +230,7 @@ export function mountApp(root: HTMLElement): void {
     if (midi === undefined) {
       return;
     }
-    const xNorm = engine.keyboardNoteMove(midi);
-    paintRootX(xNorm);
+    engine.keyboardNoteMove(midi);
   };
 
   const applyOctave = (next: number): void => {
@@ -254,8 +281,7 @@ export function mountApp(root: HTMLElement): void {
     heldKeys.push(key);
     keyStrip.setPressed(key, true);
     unlockAudio();
-    const xNorm = engine.keyboardNoteOn(midi);
-    paintRootX(xNorm);
+    engine.keyboardNoteOn(midi);
   });
 
   window.addEventListener('keyup', (event) => {
@@ -289,6 +315,7 @@ export function mountApp(root: HTMLElement): void {
     engine.keyboardNoteOff();
   });
 
+  applyKeyScale();
   applyBpm(DEFAULT_BPM);
   syncTransportUi();
 }
