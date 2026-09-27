@@ -1,8 +1,5 @@
 {
   "plugins": {
-    "ai-sweatshop": {
-      "enabled": true
-    },
     "universal-cursor-rules/ai-sweatshop": {
       "enabled": true
     }
