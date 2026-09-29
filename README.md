@@ -6,7 +6,7 @@ Minimal browser music tool in the spirit of a Kaoss Pad: synced drum and bass lo
 
 ```bash
 npm install
-npm run dev        # Vite on :2222
+npm run dev        # Vite on :4040
 npm run typecheck
 npm run lint
 npm run build      # static site → build/
@@ -23,13 +23,13 @@ npm run start      # build + preview
    - **HOLD** — X note, Y filter
    - **ARP** — X root degree, Y octave span (1–3), walks the scale, 16th-synced
    - **GATE** — X note, Y gate rate (synced to transport)
-   - **IMS** — iMS-20 performance Kaoss: X note, Y gate (legato → 25%)
+   - **IMS** — iMS-20 performance Kaoss: X note, Y gate (legato → 25%). **REC** (R) captures one bar into a looping pattern; release to hear it play. Touch the pad again to overwrite steps under your finger (**modify**). **CLR** (C) wipes the pattern.
    **SYNTH** sets the pad timbre (SAW / SQUARE / MS-20 / SINE / PULSE) across all modes.
-   Release ends the pad voice; the groove keeps playing.
+   Release ends the live pad voice; a recorded IMS pattern keeps looping with the transport.
 6. Computer **KEYS** play an independent monophonic voice (chromatic from the selected key). They do not move the pad.
 
 Aesthetic is sparse HUD — cool near-black ground, hairline grid, pale amber accent.
 
 ## Stack
 
-Node ≥ 24, strict TypeScript, ESLint `strictTypeChecked`, Vite on port 2222.
+Node ≥ 24, strict TypeScript, ESLint `strictTypeChecked`, Vite on port 4040.
