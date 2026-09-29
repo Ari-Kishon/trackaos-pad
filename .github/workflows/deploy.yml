@@ -1,0 +1,54 @@
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: deploy-s3
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+        env:
+          NODE_ENV: production
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: build
+
+  upload:
+    needs: build
+    uses: Ari-Kishon/actions/.github/workflows/s3-update.yml@main
+    with:
+      artifact-name: site
+      source: build
+      destination: s3://ariki-tv-staging/trackaos-pad/
+      role-to-assume: arn:aws:iam::583329429936:role/github-actions-upload-to-s3
+      aws-region: eu-west-1
+
+  invalidate:
+    needs: upload
+    uses: Ari-Kishon/actions/.github/workflows/cloudfront-invalidate.yml@main
+    with:
+      distribution-id: EVDR2SD7ASMSG
+      paths: /trackaos-pad /trackaos-pad/*
+      role-to-assume: arn:aws:iam::583329429936:role/github-actions-invalidate-cloudfront

@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig({
-  base: '/',
+export default defineConfig(({ command }) => ({
+  // Production is served from s3://…/trackaos-pad/; keep root paths in dev.
+  base: command === 'build' ? '/trackaos-pad/' : '/',
   build: {
     outDir: 'build',
     emptyOutDir: true,
@@ -24,4 +25,4 @@ export default defineConfig({
     port: 2222,
     open: true,
   },
-});
+}));
