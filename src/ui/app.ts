@@ -15,6 +15,7 @@ import {
   BPM_MIN,
   DEFAULT_BPM,
   DRUM_PRESETS,
+  STEPS_PER_BAR,
   SYNTH_VOICES,
   type SynthVoiceId,
 } from '../audio/presets';
@@ -155,7 +156,30 @@ export function mountApp(root: HTMLElement): void {
 
   const arpOnlyGroup = el('div', 'arp-only-group');
   arpOnlyGroup.append(patternSeg.root, rateSeg.root, arpOctField.root);
-  arpInspector.append(modeSeg.root, arpOnlyGroup);
+
+  const imsOnlyGroup = el('div', 'arp-only-group ims-only-group');
+  const recBtn = document.createElement('button');
+  recBtn.type = 'button';
+  recBtn.className = 'transport ims-rec';
+  recBtn.textContent = 'REC';
+  recBtn.title = 'Record one bar (R)';
+  recBtn.setAttribute('aria-pressed', 'false');
+
+  const clrBtn = document.createElement('button');
+  clrBtn.type = 'button';
+  clrBtn.className = 'transport ims-clr';
+  clrBtn.textContent = 'CLR';
+  clrBtn.title = 'Clear pattern (C)';
+
+  const imsRecField = el('div', 'field');
+  const imsRecLabel = el('span', 'field-label');
+  imsRecLabel.textContent = 'PATTERN';
+  const imsRecRow = el('div', 'ims-pattern-row');
+  imsRecRow.append(recBtn, clrBtn);
+  imsRecField.append(imsRecLabel, imsRecRow);
+  imsOnlyGroup.append(imsRecField);
+
+  arpInspector.append(modeSeg.root, arpOnlyGroup, imsOnlyGroup);
 
   const syncArpOnlyEnabled = (mode: PadMode): void => {
     const enabled = mode === 'arp';
@@ -164,6 +188,21 @@ export function mountApp(root: HTMLElement): void {
     patternSeg.setEnabled(enabled);
     rateSeg.setEnabled(enabled);
     arpOctField.setEnabled(enabled);
+  };
+
+  const syncImsOnlyEnabled = (mode: PadMode): void => {
+    const enabled = mode === 'ims';
+    imsOnlyGroup.classList.toggle('is-disabled', !enabled);
+    imsOnlyGroup.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+    recBtn.disabled = !enabled;
+    clrBtn.disabled = !enabled;
+  };
+
+  const syncImsRecUi = (): void => {
+    const armed = engine.pad.imsRecIsArmed || engine.pad.imsRecIsWriting;
+    recBtn.classList.toggle('is-on', armed);
+    recBtn.classList.toggle('is-writing', engine.pad.imsRecIsWriting);
+    recBtn.setAttribute('aria-pressed', armed ? 'true' : 'false');
   };
 
   const mainRow = el('div', 'main-row');
@@ -220,6 +259,8 @@ export function mountApp(root: HTMLElement): void {
     modeSeg.setValue(mode);
     syncPadMeta(mode);
     syncArpOnlyEnabled(mode);
+    syncImsOnlyEnabled(mode);
+    syncImsRecUi();
   };
 
   applyMode(engine.pad.padMode);
@@ -322,8 +363,18 @@ export function mountApp(root: HTMLElement): void {
   const setStatus = (playing: boolean, padLive: boolean): void => {
     const transportLabel = playing ? 'TRANSPORT ON' : 'STANDBY';
     const padLabel = padLive ? ' ·  PAD LIVE' : '';
-    status.textContent = `${transportLabel}${padLabel}  ·  ${String(engine.currentBpm)} BPM`;
-    status.classList.toggle('is-live', playing || padLive);
+    let imsLabel = '';
+    if (engine.pad.padMode === 'ims') {
+      if (engine.pad.imsRecIsWriting) {
+        imsLabel = ` ·  REC ${String(STEPS_PER_BAR - engine.pad.imsRecStepsLeft)}/${String(STEPS_PER_BAR)}`;
+      } else if (engine.pad.imsRecIsArmed) {
+        imsLabel = ' ·  REC';
+      } else if (engine.pad.imsHasPattern) {
+        imsLabel = ' ·  PAT';
+      }
+    }
+    status.textContent = `${transportLabel}${padLabel}${imsLabel}  ·  ${String(engine.currentBpm)} BPM`;
+    status.classList.toggle('is-live', playing || padLive || engine.pad.imsHasPattern);
   };
 
   const syncTransportUi = (): void => {
@@ -331,8 +382,21 @@ export function mountApp(root: HTMLElement): void {
     transport.textContent = playing ? 'STOP' : 'START';
     transport.setAttribute('aria-pressed', playing ? 'true' : 'false');
     transport.classList.toggle('is-on', playing);
+    syncImsRecUi();
     setStatus(playing, engine.pad.isActive);
   };
+
+  /** Keep REC progress / PAT label fresh while transport runs in IMS. */
+  window.setInterval(() => {
+    if (engine.pad.padMode !== 'ims') {
+      return;
+    }
+    if (!engine.isPlaying && !engine.pad.imsRecIsArmed && !engine.pad.imsHasPattern) {
+      return;
+    }
+    syncImsRecUi();
+    setStatus(engine.isPlaying, engine.pad.isActive);
+  }, 100);
 
   const applyBpm = (raw: number): void => {
     engine.setBpm(raw);
@@ -345,6 +409,26 @@ export function mountApp(root: HTMLElement): void {
   // Unlock AudioContext on first user gesture anywhere in the shell.
   root.addEventListener('pointerdown', unlockAudio, { once: true });
   root.addEventListener('keydown', unlockAudio, { once: true });
+
+  recBtn.addEventListener('click', () => {
+    unlockAudio();
+    if (engine.pad.padMode !== 'ims') {
+      return;
+    }
+    engine.pad.setImsRec(!(engine.pad.imsRecIsArmed || engine.pad.imsRecIsWriting));
+    syncImsRecUi();
+    setStatus(engine.isPlaying, engine.pad.isActive);
+  });
+
+  clrBtn.addEventListener('click', () => {
+    unlockAudio();
+    if (engine.pad.padMode !== 'ims') {
+      return;
+    }
+    engine.pad.clearImsPattern();
+    syncImsRecUi();
+    setStatus(engine.isPlaying, engine.pad.isActive);
+  });
 
   drumField.select.addEventListener('change', () => {
     unlockAudio();
@@ -364,6 +448,7 @@ export function mountApp(root: HTMLElement): void {
   modeSeg.onChange((value) => {
     unlockAudio();
     applyMode(value as PadMode);
+    setStatus(engine.isPlaying, engine.pad.isActive);
   });
 
   patternSeg.onChange((value) => {
@@ -451,6 +536,7 @@ export function mountApp(root: HTMLElement): void {
     },
     onRelease: () => {
       engine.padNoteOff();
+      syncImsRecUi();
       setStatus(engine.isPlaying, false);
     },
   });
@@ -478,7 +564,27 @@ export function mountApp(root: HTMLElement): void {
       event.preventDefault();
       unlockAudio();
       applyMode(modeFromDigit);
+      setStatus(engine.isPlaying, engine.pad.isActive);
       return;
+    }
+
+    if (engine.pad.padMode === 'ims') {
+      if (key === 'r') {
+        event.preventDefault();
+        unlockAudio();
+        engine.pad.setImsRec(!(engine.pad.imsRecIsArmed || engine.pad.imsRecIsWriting));
+        syncImsRecUi();
+        setStatus(engine.isPlaying, engine.pad.isActive);
+        return;
+      }
+      if (key === 'c') {
+        event.preventDefault();
+        unlockAudio();
+        engine.pad.clearImsPattern();
+        syncImsRecUi();
+        setStatus(engine.isPlaying, engine.pad.isActive);
+        return;
+      }
     }
 
     const patternFromKey = patternByKey.get(key);

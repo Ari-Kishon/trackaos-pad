@@ -1,6 +1,7 @@
 import {
   DEFAULT_BPM,
   DEFAULT_SYNTH_VOICE,
+  STEPS_PER_BAR,
   midiToHz,
   secondsPerStep,
   type SynthVoiceId,
@@ -10,6 +11,7 @@ import {
   DEFAULT_SCALE_ID,
   SCALE_OCTAVES,
   clampScaleOctaves,
+  degreeCount,
   degreeFromXNorm,
   midiFromDegree,
   rootMidiFromKeyPc,
@@ -22,6 +24,12 @@ const GATE_RATE_STEPS = [0.5, 1, 2, 4] as const;
 
 /** Top→bottom: LEGATO, 100%, 75%, 50%, 25% of a sixteenth. */
 const IMS_GATE_FRACS = [Number.POSITIVE_INFINITY, 1, 0.75, 0.5, 0.25] as const;
+
+/** Discrete Y-band index into IMS_GATE_FRACS. */
+export type ImsGateBand = 0 | 1 | 2 | 3 | 4;
+
+/** One sixteenth in the IMS pattern bar — null = rest. */
+export type ImsStep = { readonly degree: number; readonly gate: ImsGateBand } | null;
 
 export type PadMode = 'hold' | 'arp' | 'gate' | 'ims';
 
@@ -88,6 +96,11 @@ export class PadSynth {
   private lastDegree = -1;
   /** Audio time when the next IMS one-shot may re-fire while held. */
   private imsRetriggerAt = 0;
+  /** One-bar IMS pattern (degree + gate band per sixteenth). */
+  private readonly imsSteps: ImsStep[] = Array.from({ length: STEPS_PER_BAR }, () => null);
+  private imsRecArmed = false;
+  /** Remaining steps in the current REC pass (0 = not writing). */
+  private imsRecLeft = 0;
   /** Key/Scale pitch world — pad X only picks a degree within this. */
   private rootMidi = rootMidiFromKeyPc(DEFAULT_KEY_PC);
   private scaleId: ScaleId = DEFAULT_SCALE_ID;
@@ -157,8 +170,64 @@ export class PadSynth {
     return this.scaleOctaves;
   }
 
+  get imsHasPattern(): boolean {
+    return this.imsSteps.some((step) => step !== null);
+  }
+
+  get imsRecIsArmed(): boolean {
+    return this.imsRecArmed;
+  }
+
+  get imsRecIsWriting(): boolean {
+    return this.imsRecLeft > 0;
+  }
+
+  /** Steps left in the active REC pass (0 when not writing). */
+  get imsRecStepsLeft(): number {
+    return this.imsRecLeft;
+  }
+
   setBpm(bpm: number): void {
     this.bpm = bpm;
+  }
+
+  /** Arm / disarm one-bar IMS pattern recording. */
+  setImsRec(armed: boolean): void {
+    if (this.mode !== 'ims') {
+      return;
+    }
+    if (armed) {
+      this.imsRecArmed = true;
+      return;
+    }
+    this.imsRecArmed = false;
+    this.imsRecLeft = 0;
+  }
+
+  /** Wipe the IMS pattern bar and cancel REC. */
+  clearImsPattern(): void {
+    for (let i = 0; i < this.imsSteps.length; i += 1) {
+      this.imsSteps[i] = null;
+    }
+    this.imsRecArmed = false;
+    this.imsRecLeft = 0;
+    this.imsRetriggerAt = 0;
+    this.lastDegree = -1;
+    if (!this.active) {
+      this.silenceHold(this.ctx.currentTime);
+    }
+  }
+
+  /** Transport stop — silence pattern voice; keep buffer; leave REC armed for a fresh pass. */
+  transportStop(): void {
+    if (this.imsRecLeft > 0) {
+      this.imsRecLeft = 0;
+    }
+    if (!this.active) {
+      this.silenceHold(this.ctx.currentTime);
+      this.imsRetriggerAt = 0;
+      this.lastDegree = -1;
+    }
   }
 
   /** Timbre for the pad voice — live retarget if held. */
@@ -215,6 +284,8 @@ export class PadSynth {
     this.arpIndex = 0;
     this.lastDegree = -1;
     this.imsRetriggerAt = 0;
+    this.imsRecArmed = false;
+    this.imsRecLeft = 0;
     if (wasActive) {
       this.beginVoice(this.xNorm, this.yNorm);
     }
@@ -293,9 +364,18 @@ export class PadSynth {
     this.silenceHold(this.ctx.currentTime);
   }
 
-  /** Transport sixteenth-note tick — drives ARP, GATE, and IMS while held. */
+  /** Transport sixteenth-note tick — drives ARP, GATE, IMS live, and IMS pattern. */
   onTransportStep(step: number, time: number, stepDur: number): void {
-    if (!this.active || this.mode === 'hold') {
+    if (this.mode === 'hold') {
+      return;
+    }
+
+    if (this.mode === 'ims') {
+      this.onImsTransportStep(step, time);
+      return;
+    }
+
+    if (!this.active) {
       return;
     }
     if (time < this.suppressUntil) {
@@ -304,13 +384,6 @@ export class PadSynth {
 
     if (this.mode === 'arp') {
       this.scheduleArpHits(step, time, stepDur);
-      return;
-    }
-
-    if (this.mode === 'ims') {
-      if (time + 1e-4 >= this.imsRetriggerAt) {
-        this.fireImsVoice(time, false);
-      }
       return;
     }
 
@@ -325,6 +398,70 @@ export class PadSynth {
     const half = stepDur * 0.5;
     this.fireGateNote(time, half * 0.45);
     this.fireGateNote(time + half, half * 0.45);
+  }
+
+  private onImsTransportStep(step: number, time: number): void {
+    const barStep = ((step % STEPS_PER_BAR) + STEPS_PER_BAR) % STEPS_PER_BAR;
+
+    if (this.imsRecArmed && this.imsRecLeft === 0) {
+      this.imsRecLeft = STEPS_PER_BAR;
+    }
+
+    if (this.imsRecLeft > 0) {
+      if (this.active) {
+        this.writeImsStep(barStep);
+        this.fireImsVoice(time, true);
+      } else {
+        this.imsSteps[barStep] = null;
+        this.silenceHold(time);
+        this.imsRetriggerAt = 0;
+        this.lastDegree = -1;
+      }
+      this.imsRecLeft -= 1;
+      if (this.imsRecLeft === 0) {
+        this.imsRecArmed = false;
+      }
+      return;
+    }
+
+    // Touch-overwrite: pad down over an existing pattern (REC off).
+    if (this.active && this.imsHasPattern) {
+      this.writeImsStep(barStep);
+      this.fireImsVoice(time, true);
+      return;
+    }
+
+    if (this.active) {
+      if (time < this.suppressUntil) {
+        return;
+      }
+      if (time + 1e-4 >= this.imsRetriggerAt) {
+        this.fireImsVoice(time, false);
+      }
+      return;
+    }
+
+    if (this.imsHasPattern) {
+      this.playImsPatternStep(barStep, time);
+    }
+  }
+
+  private writeImsStep(barStep: number): void {
+    this.imsSteps[barStep] = {
+      degree: degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves),
+      gate: gateBandFromY(this.yNorm),
+    };
+  }
+
+  private playImsPatternStep(barStep: number, time: number): void {
+    const cell = this.imsSteps[barStep];
+    if (!cell) {
+      this.silenceHold(time);
+      this.imsRetriggerAt = 0;
+      this.lastDegree = -1;
+      return;
+    }
+    this.fireImsStored(cell.degree, cell.gate, time, false);
   }
 
   private beginVoice(xNorm: number, yNorm: number): void {
@@ -405,14 +542,29 @@ export class PadSynth {
 
   private fireImsVoice(time: number, force: boolean): void {
     const degree = degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves);
-    const frac = imsGateFracFromY(this.yNorm);
-    const stepDur = secondsPerStep(this.bpm);
-    const freq = this.freqFromDegree(degree);
+    const gate = gateBandFromY(this.yNorm);
+    this.fireImsStored(degree, gate, time, force);
+  }
 
-    this.lastDegree = degree;
+  /**
+   * IMS voice from an explicit degree + gate band.
+   * Live hold uses imsRetriggerAt for gated re-fire; pattern gated notes fire once per step.
+   */
+  private fireImsStored(
+    degree: number,
+    gate: ImsGateBand,
+    time: number,
+    force: boolean,
+  ): void {
+    const clamped = clampDegree(degree, this.scaleId, this.scaleOctaves);
+    const frac = IMS_GATE_FRACS[gate];
+    const stepDur = secondsPerStep(this.bpm);
+    const freq = this.freqFromDegree(clamped);
+
+    this.lastDegree = clamped;
 
     if (!Number.isFinite(frac)) {
-      // LEGATO — sustain while held; timbre from synth voice.
+      // LEGATO — sustain; timbre from synth voice.
       this.ensureHoldOsc();
       this.applyHoldVoiceShape(time);
       if (this.osc) {
@@ -431,11 +583,16 @@ export class PadSynth {
       return;
     }
 
-    // Gated one-shots: duration + re-fire interval from Y (iMS-20 gate %).
+    // Gated one-shots: duration from gate %. Live hold re-arms imsRetriggerAt;
+    // pattern playback (pad up) leaves it parked so only the next step fires.
     this.silenceHold(time);
     const duration = Math.max(stepDur * frac * 0.92, 0.025);
     this.playVoiceOneShot(freq, time, duration, true);
-    this.imsRetriggerAt = time + Math.max(duration, stepDur * frac);
+    if (this.active) {
+      this.imsRetriggerAt = time + Math.max(duration, stepDur * frac);
+    } else {
+      this.imsRetriggerAt = Number.POSITIVE_INFINITY;
+    }
   }
 
   private fireArpNote(time: number, duration: number): void {
@@ -854,12 +1011,21 @@ function gateRateFromY(yNorm: number): number {
 }
 
 function imsGateFracFromY(yNorm: number): number {
+  return IMS_GATE_FRACS[gateBandFromY(yNorm)];
+}
+
+function gateBandFromY(yNorm: number): ImsGateBand {
   const y = clamp01(yNorm);
-  const idx = Math.min(
-    IMS_GATE_FRACS.length - 1,
-    Math.floor(y * IMS_GATE_FRACS.length),
-  );
-  return IMS_GATE_FRACS[idx] ?? 0.5;
+  const idx = Math.min(IMS_GATE_FRACS.length - 1, Math.floor(y * IMS_GATE_FRACS.length));
+  return idx as ImsGateBand;
+}
+
+function clampDegree(degree: number, scaleId: ScaleId, octaves: number): number {
+  const n = degreeCount(scaleId, octaves);
+  if (n <= 0) {
+    return 0;
+  }
+  return Math.min(n - 1, Math.max(0, Math.round(degree)));
 }
 
 function imsGateIsLegato(yNorm: number): boolean {

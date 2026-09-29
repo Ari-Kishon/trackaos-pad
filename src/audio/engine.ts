@@ -210,6 +210,7 @@ export class AudioEngine {
       clearInterval(this.timerId);
       this.timerId = null;
     }
+    this.pad.transportStop();
   }
 
   toggle(): boolean {

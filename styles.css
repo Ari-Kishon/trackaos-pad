@@ -134,6 +134,25 @@ body {
   pointer-events: none;
 }
 
+.ims-pattern-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+}
+
+.ims-rec,
+.ims-clr {
+  min-width: 0;
+  padding: 0.55rem 0.5rem;
+  letter-spacing: 0.16em;
+}
+
+.ims-rec.is-writing {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .field-segments {
   min-width: 0;
 }
@@ -598,6 +617,10 @@ body {
     padding-top: 0.65rem;
     border-top: 1px solid var(--rule);
     gap: 0.75rem;
+  }
+
+  .ims-pattern-row {
+    max-width: 12rem;
   }
 
   .segment-row {
