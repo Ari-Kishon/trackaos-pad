@@ -1,17 +1,11 @@
 import eslint from '@eslint/js';
+import prettier from 'eslint-config-prettier';
 import { defineConfig } from 'eslint/config';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
   {
-    ignores: [
-      'dist/**',
-      'build/**',
-      'node_modules/**',
-      'public/**',
-      'eslint.config.js',
-      'vite.config.ts',
-    ],
+    ignores: ['dist/**', 'build/**', 'node_modules/**', 'public/**', 'eslint.config.js', 'vite.config.ts'],
   },
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
@@ -24,4 +18,5 @@ export default defineConfig(
       },
     },
   },
+  prettier,
 );

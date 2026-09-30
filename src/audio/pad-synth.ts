@@ -550,12 +550,7 @@ export class PadSynth {
    * IMS voice from an explicit degree + gate band.
    * Live hold uses imsRetriggerAt for gated re-fire; pattern gated notes fire once per step.
    */
-  private fireImsStored(
-    degree: number,
-    gate: ImsGateBand,
-    time: number,
-    force: boolean,
-  ): void {
+  private fireImsStored(degree: number, gate: ImsGateBand, time: number, force: boolean): void {
     const clamped = clampDegree(degree, this.scaleId, this.scaleOctaves);
     const frac = IMS_GATE_FRACS[gate];
     const stepDur = secondsPerStep(this.bpm);
@@ -574,10 +569,7 @@ export class PadSynth {
         this.oscB.frequency.setValueAtTime(freq * detuneRatio(this.voice), time);
       }
       this.filter.Q.setValueAtTime(holdFilterQ(this.voice, true), time);
-      this.filter.frequency.setValueAtTime(
-        Math.min(freq * holdCutoffMul(this.voice, true), 4800),
-        time,
-      );
+      this.filter.frequency.setValueAtTime(Math.min(freq * holdCutoffMul(this.voice, true), 4800), time);
       this.openHoldAmp(time, 0.95, force ? 0.008 : 0.004);
       this.imsRetriggerAt = Number.POSITIVE_INFINITY;
       return;
@@ -597,12 +589,7 @@ export class PadSynth {
 
   private fireArpNote(time: number, duration: number): void {
     const startDegree = degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves);
-    const chord = buildArpDegrees(
-      this.rootMidi,
-      this.scaleId,
-      startDegree,
-      this.arpOctaves,
-    );
+    const chord = buildArpDegrees(this.rootMidi, this.scaleId, startDegree, this.arpOctaves);
     const idx = arpChordIndex(this.arpPattern, this.arpIndex, chord.length);
     const freq = chord[idx] ?? this.freqFromDegree(startDegree);
     this.arpIndex += 1;
@@ -610,9 +597,7 @@ export class PadSynth {
   }
 
   private fireGateNote(time: number, duration: number): void {
-    const freq = this.freqFromDegree(
-      degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves),
-    );
+    const freq = this.freqFromDegree(degreeFromXNorm(this.xNorm, this.scaleId, this.scaleOctaves));
     this.playVoiceOneShot(freq, time, duration, false);
   }
 
@@ -621,12 +606,7 @@ export class PadSynth {
   }
 
   /** Independent voice — avoids shared-amp automation fights. */
-  private playVoiceOneShot(
-    freq: number,
-    time: number,
-    duration: number,
-    imsGate: boolean,
-  ): void {
+  private playVoiceOneShot(freq: number, time: number, duration: number, imsGate: boolean): void {
     const f = Math.max(freq, 20);
     const releaseAt = time + Math.max(duration, 0.024);
 
@@ -650,10 +630,7 @@ export class PadSynth {
     const cutoffMul = this.voice === 'sine' ? 3.2 : imsGate ? 7.5 : 5.5;
     filter.frequency.setValueAtTime(Math.min(Math.max(f * cutoffMul, 200), 5200), time);
     if (imsGate && this.voice !== 'sine') {
-      filter.frequency.exponentialRampToValueAtTime(
-        Math.max(f * 1.6, 160),
-        time + Math.max(duration * 0.7, 0.04),
-      );
+      filter.frequency.exponentialRampToValueAtTime(Math.max(f * 1.6, 160), time + Math.max(duration * 0.7, 0.04));
     }
 
     const gain = this.ctx.createGain();
@@ -671,13 +648,7 @@ export class PadSynth {
     osc.stop(releaseAt + 0.03);
   }
 
-  private playMs20OneShot(
-    f: number,
-    time: number,
-    duration: number,
-    releaseAt: number,
-    aggressive: boolean,
-  ): void {
+  private playMs20OneShot(f: number, time: number, duration: number, releaseAt: number, aggressive: boolean): void {
     const merge = this.ctx.createGain();
     merge.gain.value = 0.9;
 
@@ -700,10 +671,7 @@ export class PadSynth {
     lp.type = 'lowpass';
     lp.Q.value = aggressive ? 9.5 : 5.5;
     lp.frequency.setValueAtTime(Math.min(f * 7.5, 4800), time);
-    lp.frequency.exponentialRampToValueAtTime(
-      Math.max(f * 1.8, 180),
-      time + Math.max(duration * 0.7, 0.04),
-    );
+    lp.frequency.exponentialRampToValueAtTime(Math.max(f * 1.8, 180), time + Math.max(duration * 0.7, 0.04));
 
     const gain = this.ctx.createGain();
     const peak = 0.92;
@@ -726,12 +694,7 @@ export class PadSynth {
     square.stop(releaseAt + 0.03);
   }
 
-  private playPulseOneShot(
-    f: number,
-    time: number,
-    duration: number,
-    releaseAt: number,
-  ): void {
+  private playPulseOneShot(f: number, time: number, duration: number, releaseAt: number): void {
     const merge = this.ctx.createGain();
     merge.gain.value = 0.85;
 
@@ -749,10 +712,7 @@ export class PadSynth {
     filter.type = 'lowpass';
     filter.Q.value = 4.2;
     filter.frequency.setValueAtTime(Math.min(f * 6, 4000), time);
-    filter.frequency.exponentialRampToValueAtTime(
-      Math.max(f * 2.2, 220),
-      time + Math.max(duration * 0.55, 0.03),
-    );
+    filter.frequency.exponentialRampToValueAtTime(Math.max(f * 2.2, 220), time + Math.max(duration * 0.55, 0.03));
 
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(0.0001, time);
@@ -850,22 +810,14 @@ export class PadSynth {
     }
   }
 
-  private setHoldParams(
-    xNorm: number,
-    yNorm: number,
-    time: number,
-    snap: boolean,
-  ): void {
+  private setHoldParams(xNorm: number, yNorm: number, time: number, snap: boolean): void {
     if (!this.osc) {
       return;
     }
     const degree = degreeFromXNorm(xNorm, this.scaleId, this.scaleOctaves);
     const freq = this.freqFromDegree(degree);
     const y = clamp01(yNorm);
-    const cutoff =
-      this.voice === 'sine'
-        ? 180 + (1 - y) * 2400
-        : 220 + (1 - y) * 6800;
+    const cutoff = this.voice === 'sine' ? 180 + (1 - y) * 2400 : 220 + (1 - y) * 6800;
     this.lastDegree = degree;
 
     if (snap) {
@@ -986,12 +938,7 @@ function arpChordIndex(pattern: ArpPattern, step: number, length: number): numbe
 }
 
 /** Walk scale degrees from startDegree across `octaves` of the scale. */
-function buildArpDegrees(
-  rootMidi: number,
-  scaleId: ScaleId,
-  startDegree: number,
-  octaves: number,
-): number[] {
+function buildArpDegrees(rootMidi: number, scaleId: ScaleId, startDegree: number, octaves: number): number[] {
   const perOct = scaleById(scaleId).semis.length;
   const count = Math.max(1, perOct * octaves);
   const freqs: number[] = [];
@@ -1003,10 +950,7 @@ function buildArpDegrees(
 
 function gateRateFromY(yNorm: number): number {
   const y = clamp01(yNorm);
-  const idx = Math.min(
-    GATE_RATE_STEPS.length - 1,
-    Math.floor(y * GATE_RATE_STEPS.length),
-  );
+  const idx = Math.min(GATE_RATE_STEPS.length - 1, Math.floor(y * GATE_RATE_STEPS.length));
   return GATE_RATE_STEPS[idx] ?? 1;
 }
 

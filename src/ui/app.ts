@@ -57,8 +57,7 @@ export function mountApp(root: HTMLElement): void {
 
   const header = el('header', 'shell-header');
   const brand = el('div', 'brand');
-  brand.innerHTML =
-    '<span class="brand-mark">TRACKAOS</span><span class="brand-sub">PAD</span>';
+  brand.innerHTML = '<span class="brand-mark">TRACKAOS</span><span class="brand-sub">PAD</span>';
 
   const status = el('p', 'status-line');
 
@@ -91,13 +90,7 @@ export function mountApp(root: HTMLElement): void {
   transport.textContent = 'START';
   transport.setAttribute('aria-pressed', 'false');
 
-  songBar.append(
-    keyField.root,
-    drumField.root,
-    bassField.root,
-    bpmField.root,
-    transport,
-  );
+  songBar.append(keyField.root, drumField.root, bassField.root, bpmField.root, transport);
 
   const mixBar = el('div', 'mix-bar');
   const drumVol = fieldVolume('DRUM LVL', 'drum-volume', engine.drumVolume);
@@ -141,18 +134,11 @@ export function mountApp(root: HTMLElement): void {
     engine.pad.arpRateId,
   );
 
-  const arpOctField = fieldStepper(
-    'ARP OCT',
-    'arp-oct',
-    engine.pad.arpOctaveSpan,
-    ARP_OCT_MIN,
-    ARP_OCT_MAX,
-    (next) => {
-      unlockAudio();
-      engine.pad.setArpOctaves(next);
-      arpOctField.setValue(engine.pad.arpOctaveSpan);
-    },
-  );
+  const arpOctField = fieldStepper('ARP OCT', 'arp-oct', engine.pad.arpOctaveSpan, ARP_OCT_MIN, ARP_OCT_MAX, (next) => {
+    unlockAudio();
+    engine.pad.setArpOctaves(next);
+    arpOctField.setValue(engine.pad.arpOctaveSpan);
+  });
 
   const arpOnlyGroup = el('div', 'arp-only-group');
   arpOnlyGroup.append(patternSeg.root, rateSeg.root, arpOctField.root);
@@ -350,12 +336,7 @@ export function mountApp(root: HTMLElement): void {
     (value) => (value > 0 ? `+${String(value)}` : String(value)),
   );
 
-  padRail.append(
-    scaleField.root,
-    synthField.root,
-    octRangeField.root,
-    octOffsetField.root,
-  );
+  padRail.append(scaleField.root, synthField.root, octRangeField.root, octOffsetField.root);
 
   mainRow.append(padRail, stage);
   root.append(header, songBar, mixBar, arpInspector, mainRow);
@@ -481,10 +462,7 @@ export function mountApp(root: HTMLElement): void {
     applyBpm(Number(bpmField.number.value));
   });
 
-  const bindVolume = (
-    field: ReturnType<typeof fieldVolume>,
-    apply: (level: number) => void,
-  ): void => {
+  const bindVolume = (field: ReturnType<typeof fieldVolume>, apply: (level: number) => void): void => {
     const sync = (raw: number): void => {
       unlockAudio();
       const level = Math.min(1, Math.max(0, raw / 100));
@@ -549,9 +527,7 @@ export function mountApp(root: HTMLElement): void {
     ['/', 'random'],
   ]);
 
-  const modeByDigit = new Map<string, PadMode>(
-    PAD_MODES.map((p) => [p.shortcut, p.id] as const),
-  );
+  const modeByDigit = new Map<string, PadMode>(PAD_MODES.map((p) => [p.shortcut, p.id] as const));
 
   window.addEventListener('keydown', (event) => {
     if (event.repeat || isTypingTarget(event.target)) {

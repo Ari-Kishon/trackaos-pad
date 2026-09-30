@@ -1,0 +1,9 @@
+build
+dist
+coverage
+package-lock.json
+.venv
+.impeccable
+.cursor
+.github/workflows/deploy.yml
+.github/workflows/promote.yml

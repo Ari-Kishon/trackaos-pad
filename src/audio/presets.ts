@@ -90,9 +90,7 @@ export const DRUM_PRESETS: readonly DrumPreset[] = [
       { step: 4, kind: 'clap', velocity: 0.78 },
       { step: 12, kind: 'clap', velocity: 0.82 },
       ...closedHats16th(0.32).map((h) =>
-        h.step === 2 || h.step === 6 || h.step === 10 || h.step === 14
-          ? { ...h, velocity: h.velocity * 1.15 }
-          : h,
+        h.step === 2 || h.step === 6 || h.step === 10 || h.step === 14 ? { ...h, velocity: h.velocity * 1.15 } : h,
       ),
       { step: 14, kind: 'openhat', velocity: 0.28 },
     ],

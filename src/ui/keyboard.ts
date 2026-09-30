@@ -43,9 +43,7 @@ export const BASS_KEYS: readonly BassKeyDef[] = [
   { key: 'k', label: 'K', semi: 12, kind: 'white', slot: 7 },
 ];
 
-const SEMI_BY_KEY = new Map(
-  BASS_KEYS.map((def) => [def.key, def.semi] as const),
-);
+const SEMI_BY_KEY = new Map(BASS_KEYS.map((def) => [def.key, def.semi] as const));
 
 const KEY_NAME_BY_PC = new Map(KEY_OPTIONS.map((k) => [k.pc, k.label] as const));
 
@@ -57,11 +55,7 @@ export function clampKeyPc(pc: number): number {
   return ((Math.round(pc) % 12) + 12) % 12;
 }
 
-export function midiForBassKey(
-  key: string,
-  octave = 0,
-  keyPc = 0,
-): number | undefined {
+export function midiForBassKey(key: string, octave = 0, keyPc = 0): number | undefined {
   const semi = SEMI_BY_KEY.get(key.toLowerCase());
   if (semi === undefined) {
     return undefined;

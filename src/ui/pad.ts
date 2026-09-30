@@ -12,7 +12,10 @@ export type PadHandlers = {
 
 type Norm = { x: number; y: number };
 
-export function createPad(surface: HTMLElement, handlers: PadHandlers): {
+export function createPad(
+  surface: HTMLElement,
+  handlers: PadHandlers,
+): {
   destroy: () => void;
   setVisual: (pointer: PadPointer) => void;
 } {

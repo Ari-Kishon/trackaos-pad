@@ -1,7 +1,7 @@
 {
   "name": "trackaos-pad",
   "version": "0.1.0",
-  "description": "Minimal Kaoss Pad\u2013like browser music tool \u2014 drum/bass loops + XY synth pad",
+  "description": "Minimal Kaoss Pad–like browser music tool — drum/bass loops + XY synth pad",
   "type": "module",
   "private": true,
   "engines": {
@@ -13,13 +13,17 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "prettify": "prettier --write .",
+    "check": "npm run typecheck && npm run lint && prettier --check . && npm run build"
   },
   "license": "ISC",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.2",
     "eslint": "^10.11.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.9",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.0",
     "vite": "^8.3.1"

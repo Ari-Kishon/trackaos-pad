@@ -249,10 +249,7 @@ export class AudioEngine {
       return;
     }
     osc.frequency.setValueAtTime(Math.max(hz, 20), now);
-    this.keyboardFilter.frequency.setValueAtTime(
-      Math.min(Math.max(hz * 7, 400), 2800),
-      now,
-    );
+    this.keyboardFilter.frequency.setValueAtTime(Math.min(Math.max(hz * 7, 400), 2800), now);
     const g = this.keyboardAmp.gain;
     g.cancelScheduledValues(now);
     g.setValueAtTime(Math.max(g.value, 0.0001), now);
@@ -267,11 +264,7 @@ export class AudioEngine {
     const now = this.ctx.currentTime;
     const hz = midiToHz(midi);
     this.keyboardOsc.frequency.setTargetAtTime(Math.max(hz, 20), now, 0.01);
-    this.keyboardFilter.frequency.setTargetAtTime(
-      Math.min(Math.max(hz * 7, 400), 2800),
-      now,
-      0.015,
-    );
+    this.keyboardFilter.frequency.setTargetAtTime(Math.min(Math.max(hz * 7, 400), 2800), now, 0.015);
   }
 
   keyboardNoteOff(): void {
@@ -313,13 +306,7 @@ export class AudioEngine {
     }
     for (const note of this.bassPreset.notes) {
       if (note.step === step) {
-        this.playBass(
-          note.midi + this.keyPc,
-          time,
-          note.durationSteps * stepDur,
-          note.velocity,
-          this.bassPreset.voice,
-        );
+        this.playBass(note.midi + this.keyPc, time, note.durationSteps * stepDur, note.velocity, this.bassPreset.voice);
       }
     }
     this.pad.onTransportStep(step, time, stepDur);
@@ -453,41 +440,20 @@ export class AudioEngine {
     osc.stop(time + 0.05);
   }
 
-  private playBass(
-    midi: number,
-    time: number,
-    duration: number,
-    velocity: number,
-    voice: BassVoice,
-  ): void {
+  private playBass(midi: number, time: number, duration: number, velocity: number, voice: BassVoice): void {
     if (voice === 'reese') {
       this.playReeseBass(midi, time, duration, velocity);
       return;
     }
 
     const osc = this.ctx.createOscillator();
-    osc.type =
-      voice === 'sub'
-        ? 'sine'
-        : voice === 'acid'
-          ? 'sawtooth'
-          : voice === 'pluck'
-            ? 'triangle'
-            : 'square';
+    osc.type = voice === 'sub' ? 'sine' : voice === 'acid' ? 'sawtooth' : voice === 'pluck' ? 'triangle' : 'square';
     osc.frequency.value = midiToHz(midi);
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.Q.value =
-      voice === 'acid' ? 9 : voice === 'pluck' ? 4.5 : voice === 'pulse' ? 2.4 : 0.9;
-    const startCut =
-      voice === 'sub'
-        ? 180
-        : voice === 'acid'
-          ? 1600
-          : voice === 'pluck'
-            ? 2200
-            : 520;
+    filter.Q.value = voice === 'acid' ? 9 : voice === 'pluck' ? 4.5 : voice === 'pulse' ? 2.4 : 0.9;
+    const startCut = voice === 'sub' ? 180 : voice === 'acid' ? 1600 : voice === 'pluck' ? 2200 : 520;
     filter.frequency.setValueAtTime(startCut, time);
     if (voice === 'acid' || voice === 'pluck') {
       filter.frequency.exponentialRampToValueAtTime(
@@ -497,21 +463,11 @@ export class AudioEngine {
     }
 
     const gain = this.ctx.createGain();
-    const peak =
-      (voice === 'sub'
-        ? 0.78
-        : voice === 'acid'
-          ? 0.42
-          : voice === 'pluck'
-            ? 0.48
-            : 0.4) * velocity;
+    const peak = (voice === 'sub' ? 0.78 : voice === 'acid' ? 0.42 : voice === 'pluck' ? 0.48 : 0.4) * velocity;
     const attack = voice === 'acid' || voice === 'pluck' ? 0.004 : 0.01;
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.exponentialRampToValueAtTime(peak, time + attack);
-    const releaseStart = Math.max(
-      time + duration * (voice === 'pluck' ? 0.25 : 0.5),
-      time + attack + 0.02,
-    );
+    const releaseStart = Math.max(time + duration * (voice === 'pluck' ? 0.25 : 0.5), time + attack + 0.02);
     gain.gain.setValueAtTime(peak * (voice === 'pluck' ? 0.45 : 0.8), releaseStart);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
 
@@ -523,12 +479,7 @@ export class AudioEngine {
   }
 
   /** Detuned dual saw — thick mid-bass bed. */
-  private playReeseBass(
-    midi: number,
-    time: number,
-    duration: number,
-    velocity: number,
-  ): void {
+  private playReeseBass(midi: number, time: number, duration: number, velocity: number): void {
     const f = midiToHz(midi);
     const merge = this.ctx.createGain();
     merge.gain.value = 0.72;

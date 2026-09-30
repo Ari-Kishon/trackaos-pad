@@ -6,12 +6,7 @@ export const KEY_BASE_MIDI = 36;
 /** Default Key = A (A2), matching prior IMS root. */
 export const DEFAULT_KEY_PC = 9;
 
-export type ScaleId =
-  | 'chromatic'
-  | 'ionian'
-  | 'aeolian'
-  | 'dorian'
-  | 'minor_pent';
+export type ScaleId = 'chromatic' | 'ionian' | 'aeolian' | 'dorian' | 'minor_pent';
 
 export type ScaleDef = {
   readonly id: ScaleId;
@@ -45,17 +40,11 @@ export const OCTAVE_OFFSET_MIN = -2;
 export const OCTAVE_OFFSET_MAX = 2;
 
 export function clampScaleOctaves(octaves: number): number {
-  return Math.min(
-    SCALE_OCTAVES_MAX,
-    Math.max(SCALE_OCTAVES_MIN, Math.round(octaves)),
-  );
+  return Math.min(SCALE_OCTAVES_MAX, Math.max(SCALE_OCTAVES_MIN, Math.round(octaves)));
 }
 
 export function clampOctaveOffset(offset: number): number {
-  return Math.min(
-    OCTAVE_OFFSET_MAX,
-    Math.max(OCTAVE_OFFSET_MIN, Math.round(offset)),
-  );
+  return Math.min(OCTAVE_OFFSET_MAX, Math.max(OCTAVE_OFFSET_MIN, Math.round(offset)));
 }
 
 const SCALE_BY_ID = new Map(SCALES.map((s) => [s.id, s] as const));
@@ -94,28 +83,17 @@ export function rootMidiFromKeyPc(pc: number): number {
   return KEY_BASE_MIDI + p;
 }
 
-export function degreeCount(
-  scaleId: ScaleId,
-  octaves: number = SCALE_OCTAVES,
-): number {
+export function degreeCount(scaleId: ScaleId, octaves: number = SCALE_OCTAVES): number {
   return scaleById(scaleId).semis.length * clampScaleOctaves(octaves);
 }
 
-export function degreeFromXNorm(
-  xNorm: number,
-  scaleId: ScaleId,
-  octaves: number = SCALE_OCTAVES,
-): number {
+export function degreeFromXNorm(xNorm: number, scaleId: ScaleId, octaves: number = SCALE_OCTAVES): number {
   const n = degreeCount(scaleId, octaves);
   const idx = Math.floor(clamp01(xNorm) * n);
   return Math.min(n - 1, Math.max(0, idx));
 }
 
-export function midiFromDegree(
-  rootMidi: number,
-  scaleId: ScaleId,
-  degree: number,
-): number {
+export function midiFromDegree(rootMidi: number, scaleId: ScaleId, degree: number): number {
   const semis = scaleById(scaleId).semis;
   const perOct = semis.length;
   const d = Math.max(0, degree);
